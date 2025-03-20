@@ -1,4 +1,4 @@
-const { Connection, Keypair, PublicKey, Transaction } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 
@@ -50,8 +50,8 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                 wrapAndUnwrapSol: true
             }
         });
-        const transaction = Transaction.from(Buffer.from(swap.swapTransaction, 'base64'));
-        transaction.sign(keypair);
+        const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+        transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
         console.log(`✅ Compra: ${txid} | Precio: ${quote.outAmount / 1e9} SOL`);
@@ -83,8 +83,8 @@ async function sellToken(tokenPubKey) {
                 wrapAndUnwrapSol: true
             }
         });
-        const transaction = Transaction.from(Buffer.from(swap.swapTransaction, 'base64'));
-        transaction.sign(keypair);
+        const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+        transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
         const currentPrice = quote.outAmount / 1e9;
@@ -99,7 +99,7 @@ async function sellToken(tokenPubKey) {
             tradingCapital += profit + amount;
             console.log(`📉 Pérdida: ${profit} SOL | Capital: ${tradingCapital} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()];
+        delete portfolio[tokenPubKey.toBase58()]);
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
         if (error.getLogs) {
