@@ -1,6 +1,7 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
+const axios = require('axios'); // Para obtener datos de mercado
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.decode);
@@ -11,28 +12,54 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const jupiterApi = createJupiterApiClient();
-const portfolio = {
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': { buyPrice: 0.08 / 10.23, amount: 10.23 } // USDT comprado
-};
-let tradingCapital = 0; // Tras la compra inicial
+const portfolio = {};
+let tradingCapital = 0.14; // Capital actual
 let savedSol = 0;
-const maxTrades = 1;
 const MIN_TRADE_AMOUNT = 0.02;
 
-async function fetchTopTokens() {
-    console.log('Fetching top tokens from Jupiter API...');
+// Lista inicial de tokens volátiles con market cap >$1M
+const volatileTokens = [
+    'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL', // STEP
+    'kinXdEcpDQeHPEuQnqmUgtYvK2sjDarPRCVCEnnExST', // KIN
+    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN', // SLND
+];
+
+async function fetchVolatileToken() {
+    console.log('Buscando token volátil con alto volumen...');
     try {
+        // Obtener datos de mercado desde CoinGecko (alternativa: CoinMarketCap API si tienes key)
+        const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
+            params: {
+                vs_currency: 'usd',
+                ids: 'step-app,kin,solend', // IDs de CoinGecko para STEP, KIN, SLND
+                order: 'volume_desc',
+                per_page: 10,
+                page: 1,
+                sparkline: false
+            }
+        });
+        const tokens = response.data.filter(token => 
+            token.market_cap > 1000000 && token.total_volume > 500000
+        );
+        if (tokens.length === 0) throw new Error('No se encontraron tokens con volumen suficiente');
+        
+        const selectedToken = tokens[0]; // El de mayor volumen
+        const tokenMint = volatileTokens.find(mint => 
+            mint.includes(selectedToken.symbol.toUpperCase()) || mint === selectedToken.id
+        );
+        if (!tokenMint) throw new Error('Token no soportado en la lista');
+
         const quote = await jupiterApi.quoteGet({
             inputMint: 'So11111111111111111111111111111111111111112', // SOL
-            outputMint: '7xKXtzSsc1uPucxW9VpjeXCqiYxnmX2rcza7GW2aM5R', // RAY (volátil)
+            outputMint: tokenMint,
             amount: Math.floor(tradingCapital * 1e9),
             slippageBps: 50
         });
         console.log('Quote received:', quote);
-        return [{ token: new PublicKey(quote.routePlan[0].swapInfo.outputMint), price: quote.outAmount / 1e6 }]; // RAY usa 6 decimales
+        return { token: new PublicKey(tokenMint), price: quote.outAmount / 1e6 };
     } catch (error) {
-        console.log('Error obteniendo tokens:', error.message, error.response ? error.response.data : '');
-        return [];
+        console.log('Error buscando token:', error.message);
+        return null;
     }
 }
 
@@ -56,9 +83,9 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
-        const tokenAmount = quote.outAmount / 1e6; // Cantidad en tokens (ej. RAY)
+        const tokenAmount = quote.outAmount / 1e6;
         console.log(`✅ Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
-        portfolio[tokenPubKey.toBase58()] = { buyPrice: amountPerTrade / tokenAmount, amount: tokenAmount }; // Precio en SOL por token
+        portfolio[tokenPubKey.toBase58()] = { buyPrice: amountPerTrade / tokenAmount, amount: tokenAmount };
         tradingCapital -= amountPerTrade;
     } catch (error) {
         console.log('❌ Error en compra:', error.message);
@@ -76,7 +103,7 @@ async function sellToken(tokenPubKey) {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenPubKey.toBase58(),
             outputMint: 'So11111111111111111111111111111111111111112',
-            amount: Math.floor(amount * 1e6), // Convertir a lamports (USDT/RAY usan 6 decimales)
+            amount: Math.floor(amount * 1e6),
             slippageBps: 50
         });
         const swap = await jupiterApi.swapPost({
@@ -90,18 +117,11 @@ async function sellToken(tokenPubKey) {
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
-        const solReceived = quote.outAmount / 1e9; // SOL recibido
+        const solReceived = quote.outAmount / 1e9;
         const profit = solReceived - (amount * buyPrice);
         console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
-        if (profit > 0) {
-            const halfProfit = profit / 2;
-            savedSol += halfProfit;
-            tradingCapital += halfProfit + (amount * buyPrice);
-            console.log(`📈 Ganancia: ${profit} SOL | Guardado: ${savedSol} SOL | Capital: ${tradingCapital} SOL`);
-        } else {
-            tradingCapital += profit + (amount * buyPrice);
-            console.log(`📉 Pérdida: ${profit} SOL | Capital: ${tradingCapital} SOL`);
-        }
+        tradingCapital += solReceived; // Reinvertir todo
+        console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL`);
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
@@ -117,37 +137,31 @@ async function tradingBot() {
         console.log('🤖 Iniciando ciclo de trading...');
         console.log(`📊 Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         if (tradingCapital < MIN_TRADE_AMOUNT) {
-            console.log('🚫 Capital insuficiente para operar. Vendiendo tokens existentes...');
-        } else {
-            const topTokens = await fetchTopTokens();
-            if (topTokens.length === 0) {
-                console.log('⚠️ No se encontraron tokens válidos.');
-            } else {
-                console.log('📡 Buscando mejores tokens...');
-                console.log('Tokens obtenidos:', topTokens.length);
+            console.log('🚫 Capital insuficiente para operar.');
+            return;
+        }
 
-                const amountPerTrade = tradingCapital;
-                let trades = 0;
-                for (const { token } of topTokens) {
-                    if (trades >= maxTrades || tradingCapital < MIN_TRADE_AMOUNT) break;
-                    if (!portfolio[token.toBase58()]) {
-                        await buyToken(token, amountPerTrade);
-                        trades++;
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
-                }
+        if (Object.keys(portfolio).length === 0) {
+            const token = await fetchVolatileToken();
+            if (!token) {
+                console.log('⚠️ No se encontró token válido.');
+                return;
             }
+            console.log('📡 Seleccionado token:', token.token.toBase58());
+            await buyToken(token.token, tradingCapital);
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
         for (const token in portfolio) {
             const quote = await jupiterApi.quoteGet({
                 inputMint: token,
                 outputMint: 'So11111111111111111111111111111111111111112',
-                amount: Math.floor(portfolio[token].amount * 1e6) // Tokens a lamports
+                amount: Math.floor(portfolio[token].amount * 1e6)
             });
-            const currentPrice = quote.outAmount / 1e9 / portfolio[token].amount; // SOL por token
+            const currentPrice = quote.outAmount / 1e9 / portfolio[token].amount;
             const { buyPrice } = portfolio[token];
-            if (currentPrice >= buyPrice * 1.50 || currentPrice <= buyPrice * 0.90 || tradingCapital < MIN_TRADE_AMOUNT) {
+            console.log(`Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL`);
+            if (currentPrice >= buyPrice * 1.20 || currentPrice <= buyPrice * 0.95) {
                 await sellToken(new PublicKey(token));
             }
         }
