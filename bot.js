@@ -22,13 +22,14 @@ async function fetchTopTokens() {
     try {
         const quote = await jupiterApi.quoteGet({
             inputMint: 'So11111111111111111111111111111111111111112', // SOL
-            outputMint: '7xKXtzSsc1uPucxW9VpjeXCqiYxnmX2rcza7GW2aM5R', // RAY (ejemplo volátil)
+            outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC (más estable)
             amount: Math.floor(tradingCapital * 1e9),
             slippageBps: 50
         });
+        console.log('Quote received:', quote);
         return [{ token: new PublicKey(quote.routePlan[0].swapInfo.outputMint), price: quote.outAmount / 1e9 }];
     } catch (error) {
-        console.log('Error obteniendo tokens:', error.message);
+        console.log('Error obteniendo tokens:', error.message, error.response ? error.response.data : '');
         return [];
     }
 }
