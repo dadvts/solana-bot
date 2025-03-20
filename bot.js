@@ -2,17 +2,18 @@ const { Connection, Keypair, PublicKey, Transaction, SystemProgram, sendAndConfi
 const bs58 = require('bs58');
 const fetch = require('node-fetch');
 
-console.log('bs58 loaded:', bs58); // Depuración
-console.log('bs58.decode exists:', typeof bs58.decode); // Depuración
+console.log('bs58 loaded:', bs58);
+console.log('bs58.decode exists:', typeof bs58.default.decode);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
+const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
 let tradingCapital = 0.3; // ~$50 en SOL
 let savedSol = 0;
-const maxTrades = 3;
+const maxTrades = 2;
 
 async function fetchTopTokens() {
     try {
@@ -101,12 +102,14 @@ async function sellToken(tokenPubKey) {
 }
 
 async function tradingBot() {
+    console.log('Starting trading cycle...'); // Log de entrada
     console.log(`Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
     if (tradingCapital < 0.01) {
         console.log('Capital insuficiente. Deteniendo bot.');
         return;
     }
     const topTokens = await fetchTopTokens();
+    console.log('Top tokens fetched:', topTokens.length);
     for (const { token } of topTokens) {
         if (!portfolio[token.toBase58()] && Object.keys(portfolio).length < maxTrades) {
             await buyToken(token);
@@ -124,8 +127,12 @@ async function tradingBot() {
 }
 
 function startBot() {
+    console.log('Bot starting...'); // Log inicial
     tradingBot();
-    setInterval(tradingBot, 600000); // 10 minutos
+    setInterval(() => {
+        console.log('New cycle starting...'); // Log antes de cada ciclo
+        tradingBot();
+    }, 600000); // 10 minutos
 }
 
 startBot();
