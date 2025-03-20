@@ -19,23 +19,23 @@ let lastFetchTime = 0;
 const CACHE_DURATION = 600000;
 
 async function fetchTopTokens() {
+    console.log("Fetching tokens...");
     try {
         const now = Date.now();
         if (!cachedPairs || now - lastFetchTime > CACHE_DURATION) {
             console.log('Fetching new token pairs...');
             const response = await fetch('https://api.raydium.io/v2/main/pairs');
-            cachedPairs = (await response.json()).slice(0, 100); // Limitar a 100 pares
+            cachedPairs = (await response.json()).slice(0, 50); // Limitar a 50 pares
             lastFetchTime = now;
             console.log('Pairs fetched:', cachedPairs.length);
         } else {
             console.log('Using cached pairs:', cachedPairs.length);
         }
-
         console.log('Filtering pairs...');
         const filteredPairs = cachedPairs
-            .filter(pair =>
-                pair.volume_24h > 500000 &&
-                pair.price * pair.liquidity / pair.price > 1000000 &&
+            .filter(pair => 
+                pair.volume_24h > 500000 && 
+                pair.price * pair.liquidity / pair.price > 1000000 && 
                 Math.abs(pair.price_change_24h || 0) > 0.15
             )
             .sort((a, b) => Math.abs(b.price_change_24h || 0) - Math.abs(a.price_change_24h || 0))
@@ -44,7 +44,6 @@ async function fetchTopTokens() {
                 token: new PublicKey(pair.base_token),
                 price: pair.price
             }));
-
         console.log('Filtered tokens:', filteredPairs.length);
         return filteredPairs;
     } catch (error) {
@@ -59,7 +58,7 @@ async function getTokenPrice(tokenPubKey) {
         const pair = cachedPairs.find(p => p.base_token === tokenPubKey.toBase58());
         return pair ? pair.price : 1;
     } catch (error) {
-        console.error('Error getting price:', error.message);
+        console.log('Error al obtener precio:', error);
         return 1;
     }
 }
@@ -67,8 +66,7 @@ async function getTokenPrice(tokenPubKey) {
 async function buyToken(tokenPubKey) {
     const price = await getTokenPrice(tokenPubKey);
     const amountPerTrade = tradingCapital / maxTrades;
-    console.log(`Buying ${tokenPubKey.toBase58()} at $${price} with ${amountPerTrade} SOL`);
-
+    console.log(`Comprando ${tokenPubKey.toBase58()} a $${price} con ${amountPerTrade} SOL`);
     const transaction = new Transaction().add(
         SystemProgram.transfer({
             fromPubkey: walletPubKey,
@@ -76,13 +74,12 @@ async function buyToken(tokenPubKey) {
             lamports: Math.floor(amountPerTrade * 1e9),
         })
     );
-
     try {
         const signature = await sendAndConfirmTransaction(connection, transaction, [keypair]);
-        console.log(`✅ Purchase successful: ${signature}`);
+        console.log(`✅ Compra: ${signature}`);
         portfolio[tokenPubKey.toBase58()] = { buyPrice: price, amount: amountPerTrade };
     } catch (error) {
-        console.error('❌ Purchase error:', error.message);
+        console.log('❌ Error compra:', error.message);
     }
 }
 
@@ -90,8 +87,7 @@ async function sellToken(tokenPubKey) {
     const currentPrice = await getTokenPrice(tokenPubKey);
     const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
     const profit = (currentPrice / buyPrice - 1) * amount;
-    console.log(`Selling ${tokenPubKey.toBase58()} at $${currentPrice} (bought at $${buyPrice})`);
-
+    console.log(`Vendiendo ${tokenPubKey.toBase58()} a $${currentPrice} (compra: $${buyPrice})`);
     const transaction = new Transaction().add(
         SystemProgram.transfer({
             fromPubkey: walletPubKey,
@@ -99,71 +95,58 @@ async function sellToken(tokenPubKey) {
             lamports: Math.floor(amount * 1e9 * (currentPrice / buyPrice)),
         })
     );
-
     try {
         const signature = await sendAndConfirmTransaction(connection, transaction, [keypair]);
-        console.log(`✅ Sale successful: ${signature}`);
-
+        console.log(`✅ Venta: ${signature}`);
         if (profit > 0) {
             const halfProfit = profit / 2;
             savedSol += halfProfit;
             tradingCapital += halfProfit;
-            console.log(`📈 Profit: ${profit} SOL | Saved: ${savedSol} SOL | Capital: ${tradingCapital} SOL`);
+            console.log(`📈 Ganancia: ${profit} SOL | Guardado: ${savedSol} SOL | Capital: ${tradingCapital} SOL`);
         } else if (profit < 0) {
             tradingCapital += profit;
-            console.log(`📉 Loss: ${profit} SOL | Capital: ${tradingCapital} SOL`);
+            console.log(`📉 Pérdida: ${profit} SOL | Capital: ${tradingCapital} SOL`);
         }
-
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
-        console.error('❌ Sale error:', error.message);
+        console.log('❌ Error venta:', error.message);
     }
 }
 
 async function tradingBot() {
     try {
-        console.log('🤖 Starting trading cycle...');
-        console.log(`📊 Capital: ${tradingCapital} SOL | Saved: ${savedSol} SOL`);
-
+        console.log('🤖 Iniciando ciclo de trading...');
+        console.log(`📊 Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         if (tradingCapital < 0.01) {
-            console.log('🚫 Insufficient capital. Retrying in the next cycle.');
+            console.log('🚫 Capital insuficiente. Reintentando en el próximo ciclo.');
             return;
         }
-
         const topTokens = await fetchTopTokens();
-        console.log('📡 Searching for top tokens...');
-        console.log(`Tokens fetched: ${topTokens.length}`);
+        console.log('📡 Buscando mejores tokens...');
+        console.log('Tokens obtenidos:', topTokens.length);
 
         let trades = 0;
-        const buyPromises = [];
-
         for (const { token } of topTokens) {
             if (trades >= maxTrades) break;
             if (!portfolio[token.toBase58()]) {
-                buyPromises.push(buyToken(token));
+                await buyToken(token);
                 trades++;
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Pausa de 2 segundos entre compras
             }
         }
 
-        await Promise.all(buyPromises);
-        console.log('📈 All buy orders executed.');
-
-        const sellPromises = [];
         for (const token in portfolio) {
             const currentPrice = await getTokenPrice(new PublicKey(token));
             const { buyPrice } = portfolio[token];
             if (currentPrice >= buyPrice * 1.30 || currentPrice <= buyPrice * 0.95) {
-                sellPromises.push(sellToken(new PublicKey(token)));
+                await sellToken(new PublicKey(token));
             }
         }
 
-        await Promise.all(sellPromises);
-        console.log('📉 All sell orders executed.');
-
-        console.log('✔️ Trading cycle completed.');
+        console.log('✔️ Ciclo de trading completado.');
     } catch (error) {
-        console.error('❌ Error in trading cycle:', error.message);
-        console.log('🔄 Retrying in the next cycle...');
+        console.error('❌ Error en el ciclo de trading:', error.message);
+        console.log('🔄 Reintentando en el próximo ciclo...');
     }
 }
 
@@ -171,9 +154,10 @@ function startBot() {
     console.log('🚀 Bot starting...');
     tradingBot();
     setInterval(() => {
-        console.log('🔄 Starting new cycle...');
+        console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 600000); // 10 minutes
+    }, 1200000); // 20 minutos en lugar de 10 minutos
 }
 
 startBot();
+
