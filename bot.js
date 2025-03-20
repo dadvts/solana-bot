@@ -123,4 +123,32 @@ async function tradingBot() {
             }
         }
 
-        for (
+        for (const token in portfolio) {
+            const quote = await jupiterApi.quoteGet({
+                inputMint: token,
+                outputMint: 'So11111111111111111111111111111111111111112',
+                amount: Math.floor(portfolio[token].amount / portfolio[token].buyPrice * 1e9)
+            });
+            const currentPrice = quote.outAmount / 1e9;
+            const { buyPrice } = portfolio[token];
+            if (currentPrice >= buyPrice * 1.50 || currentPrice <= buyPrice * 0.90) {
+                await sellToken(new PublicKey(token));
+            }
+        }
+
+        console.log('✔️ Ciclo de trading completado.');
+    } catch (error) {
+        console.error('❌ Error en el ciclo:', error.message);
+    }
+}
+
+function startBot() {
+    console.log('🚀 Bot starting...');
+    tradingBot();
+    setInterval(() => {
+        console.log('🔄 Nuevo ciclo iniciando...');
+        tradingBot();
+    }, 60000);
+}
+
+startBot();
