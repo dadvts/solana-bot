@@ -13,51 +13,42 @@ const walletPubKey = keypair.publicKey;
 const portfolio = {};
 let tradingCapital = 0.08; // Tu saldo real
 let savedSol = 0;
-const maxTrades = 1; // Solo 1 trade con 0.08 SOL
-const MIN_TRADE_AMOUNT = 0.02; // Mínimo viable con fees
+const maxTrades = 1;
+const MIN_TRADE_AMOUNT = 0.02;
 
-async function fetchTopTokens() {
+async function fetchTopTokens(jupiter) {
     console.log('Fetching top tokens from Jupiter...');
     try {
-        const response = await fetch('https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=any&amount=80000000&slippage=0.5');
-        const data = await response.json();
-        const topPair = data.data
-            .filter(quote => quote.liquidity > 1000000 && quote.priceImpactPc < 1) // Alta liquidez, bajo impacto
-            .sort((a, b) => b.outAmount - a.outAmount)[0]; // Mejor retorno
-        console.log('Top token found:', topPair ? topPair.outputMint : 'none');
-        return topPair ? [{ token: new PublicKey(topPair.outputMint), price: topPair.outAmount / 1e6 }] : [];
+        const routes = await jupiter.computeRoutes({
+            inputMint: new PublicKey('So11111111111111111111111111111111111111112'), // SOL
+            outputMint: new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'), // USDC como ejemplo
+            amount: Math.floor(tradingCapital * 1e9), // 0.08 SOL
+            slippageBps: 50
+        });
+        const topRoute = routes.routesInfos
+            .filter(route => route.liquidity > 1000000 && route.priceImpactPc < 1)
+            .sort((a, b) => b.outAmount - a.outAmount)[0];
+        console.log('Top token found:', topRoute ? topRoute.outputMint.toBase58() : 'none');
+        return topRoute ? [{ token: topRoute.outputMint, price: topRoute.outAmount / 1e9 }] : [];
     } catch (error) {
         console.log('Error obteniendo tokens:', error.message);
         return [];
     }
 }
 
-async function getTokenPrice(tokenPubKey) {
-    console.log(`Getting price for ${tokenPubKey.toBase58()}...`);
-    try {
-        const response = await fetch(`https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${tokenPubKey.toBase58()}&amount=1000000`);
-        const data = await response.json();
-        return data.data[0].outAmount / 1e6; // Precio aproximado en SOL
-    } catch (error) {
-        console.log('Error al obtener precio:', error.message);
-        return 1;
-    }
-}
-
-async function buyToken(tokenPubKey, amountPerTrade) {
+async function buyToken(jupiter, tokenPubKey, amountPerTrade) {
     console.log(`Comprando ${tokenPubKey.toBase58()} con ${amountPerTrade} SOL`);
     try {
-        const jupiter = await Jupiter.load({ connection, cluster: 'mainnet-beta', user: keypair });
         const routes = await jupiter.computeRoutes({
-            inputMint: new PublicKey('So11111111111111111111111111111111111111112'), // SOL
+            inputMint: new PublicKey('So11111111111111111111111111111111111111112'),
             outputMint: tokenPubKey,
-            amount: Math.floor(amountPerTrade * 1e9), // 0.08 SOL en lamports
-            slippageBps: 50 // 0.5% slippage
+            amount: Math.floor(amountPerTrade * 1e9),
+            slippageBps: 50
         });
         const tx = await jupiter.exchange(routes.routesInfos[0]);
         const signature = await tx.execute();
-        const price = await getTokenPrice(tokenPubKey);
-        console.log(`✅ Compra: ${signature} | Precio: $${price}`);
+        const price = routes.routesInfos[0].outAmount / 1e9;
+        console.log(`✅ Compra: ${signature} | Precio: ${price} SOL`);
         portfolio[tokenPubKey.toBase58()] = { buyPrice: price, amount: amountPerTrade };
         tradingCapital -= amountPerTrade;
     } catch (error) {
@@ -65,18 +56,17 @@ async function buyToken(tokenPubKey, amountPerTrade) {
     }
 }
 
-async function sellToken(tokenPubKey) {
-    const currentPrice = await getTokenPrice(tokenPubKey);
+async function sellToken(jupiter, tokenPubKey) {
     const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
-    console.log(`Vendiendo ${tokenPubKey.toBase58()} a $${currentPrice}`);
+    console.log(`Vendiendo ${tokenPubKey.toBase58()}`);
     try {
-        const jupiter = await Jupiter.load({ connection, cluster: 'mainnet-beta', user: keypair });
         const routes = await jupiter.computeRoutes({
             inputMint: tokenPubKey,
-            outputMint: new PublicKey('So11111111111111111111111111111111111111112'), // SOL
-            amount: Math.floor(amount * currentPrice * 1e6), // Ajustar decimales según token
+            outputMint: new PublicKey('So11111111111111111111111111111111111111112'),
+            amount: Math.floor(amount / buyPrice * 1e9), // Ajustar según token
             slippageBps: 50
         });
+        const currentPrice = routes.routesInfos[0].outAmount / 1e9;
         const tx = await jupiter.exchange(routes.routesInfos[0]);
         const signature = await tx.execute();
         const profit = (currentPrice / buyPrice - 1) * amount;
@@ -104,7 +94,8 @@ async function tradingBot() {
             console.log('🚫 Capital insuficiente para operar.');
             return;
         }
-        const topTokens = await fetchTopTokens();
+        const jupiter = await Jupiter.load({ connection, cluster: 'mainnet-beta', user: keypair });
+        const topTokens = await fetchTopTokens(jupiter);
         if (topTokens.length === 0) {
             console.log('⚠️ No se encontraron tokens válidos.');
             return;
@@ -112,22 +103,26 @@ async function tradingBot() {
         console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
-        const amountPerTrade = tradingCapital; // Usa todo el capital
+        const amountPerTrade = tradingCapital;
         let trades = 0;
         for (const { token } of topTokens) {
             if (trades >= maxTrades || tradingCapital < MIN_TRADE_AMOUNT) break;
             if (!portfolio[token.toBase58()]) {
-                await buyToken(token, amountPerTrade);
+                await buyToken(jupiter, token, amountPerTrade);
                 trades++;
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
 
         for (const token in portfolio) {
-            const currentPrice = await getTokenPrice(new PublicKey(token));
+            const currentPrice = await jupiter.computeRoutes({
+                inputMint: new PublicKey(token),
+                outputMint: new PublicKey('So11111111111111111111111111111111111111112'),
+                amount: Math.floor(portfolio[token].amount / portfolio[token].buyPrice * 1e9)
+            }).then(routes => routes.routesInfos[0].outAmount / 1e9);
             const { buyPrice } = portfolio[token];
             if (currentPrice >= buyPrice * 1.50 || currentPrice <= buyPrice * 0.90) {
-                await sellToken(new PublicKey(token));
+                await sellToken(jupiter, new PublicKey(token));
             }
         }
 
@@ -143,7 +138,7 @@ function startBot() {
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 60000); // Cada minuto
+    }, 60000);
 }
 
 startBot();
