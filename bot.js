@@ -7,7 +7,8 @@ console.log('bs58.decode exists:', typeof bs58.default.decode);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+const keypair = Keypair.fromSecretKey(bs58.default ? bs58.default.decode(PRIVATE_KEY) : bs58.decode(PRIVATE_KEY));
+
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
