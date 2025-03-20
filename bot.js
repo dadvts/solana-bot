@@ -1,6 +1,5 @@
 const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
 const bs58 = require('bs58');
-const fetch = require('node-fetch');
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.default.decode);
@@ -13,13 +12,34 @@ const walletPubKey = keypair.publicKey;
 const portfolio = {};
 let tradingCapital = 0.3; // Ajusta al saldo real cuando lo tengas
 let savedSol = 0;
-const maxTrades = 1;
+const maxTrades = 2;
 const MIN_TRADE_AMOUNT = 0.01;
 
+async function fetchTopTokens() {
+    console.log('Fetching top tokens (mock)...');
+    try {
+        const mockPairs = [
+            { base_token: 'So11111111111111111111111111111111111111112', price: 150 },
+            { base_token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', price: 1 }
+        ];
+        console.log('Mock pairs loaded:', mockPairs.length);
+        const filteredPairs = mockPairs
+            .slice(0, maxTrades)
+            .map(pair => ({
+                token: new PublicKey(pair.base_token),
+                price: pair.price
+            }));
+        console.log('Filtered tokens:', filteredPairs.length);
+        return filteredPairs;
+    } catch (error) {
+        console.log('Error obteniendo tokens:', error.message);
+        return [];
+    }
+}
+
 async function getTokenPrice(tokenPubKey) {
-    // Simulamos obtener el precio de un token con un valor fijo
-    console.log(`Simulando obtención de precio para ${tokenPubKey.toBase58()}...`);
-    return 1.0; // Precio fijo
+    console.log(`Getting price for ${tokenPubKey.toBase58()} (mock)...`);
+    return tokenPubKey.toBase58() === 'So11111111111111111111111111111111111111112' ? 150 : 1;
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
@@ -30,7 +50,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
 }
 
 async function sellToken(tokenPubKey) {
-    const currentPrice = await getTokenPrice(tokenPubKey);
+    const currentPrice = await getTokenPrice(tokenPubKey) * (Math.random() > 0.5 ? 1.5 : 0.9);
     const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
     const profit = (currentPrice / buyPrice - 1) * amount;
     console.log(`Simulando venta ${tokenPubKey.toBase58()} a $${currentPrice} (compra: $${buyPrice})`);
@@ -54,9 +74,12 @@ async function tradingBot() {
             console.log('🚫 Capital insuficiente para operar.');
             return;
         }
-
-        // Usamos un token ficticio predefinido
-        const topTokens = [{ token: new PublicKey('4p4rJ84u1M7oy9pffas1oUHVQd5Jh7PQt8uHHqv9eHLf'), price: 1 }];
+        const topTokens = await fetchTopTokens();
+        if (topTokens.length === 0) {
+            console.log('⚠️ No se encontraron tokens válidos.');
+            return;
+        }
+        console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
         const amountPerTrade = Math.min(tradingCapital, 0.3) / maxTrades;
@@ -71,7 +94,7 @@ async function tradingBot() {
         }
 
         for (const token in portfolio) {
-            const currentPrice = await getTokenPrice(new PublicKey(token));
+            const currentPrice = await getTokenPrice(new PublicKey(token)) * (Math.random() > 0.5 ? 1.5 : 0.9);
             const { buyPrice } = portfolio[token];
             if (currentPrice >= buyPrice * 1.30 || currentPrice <= buyPrice * 0.95) {
                 await sellToken(new PublicKey(token));
@@ -94,4 +117,3 @@ function startBot() {
 }
 
 startBot();
-
