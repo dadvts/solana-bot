@@ -14,31 +14,16 @@ const portfolio = {};
 let tradingCapital = 0.3;
 let savedSol = 0;
 const maxTrades = 2;
-let cachedPairs = null;
-let lastFetchTime = 0;
-const CACHE_DURATION = 600000;
 
 async function fetchTopTokens() {
-    console.log("Fetching tokens...");
+    console.log('Fetching top tokens (mock)...');
     try {
-        const now = Date.now();
-        if (!cachedPairs || now - lastFetchTime > CACHE_DURATION) {
-            console.log('Fetching new token pairs...');
-            const response = await fetch('https://api.raydium.io/v2/main/pairs');
-            cachedPairs = (await response.json()).slice(0, 50); // Limitar a 50 pares
-            lastFetchTime = now;
-            console.log('Pairs fetched:', cachedPairs.length);
-        } else {
-            console.log('Using cached pairs:', cachedPairs.length);
-        }
-        console.log('Filtering pairs...');
-        const filteredPairs = cachedPairs
-            .filter(pair => 
-                pair.volume_24h > 500000 && 
-                pair.price * pair.liquidity / pair.price > 1000000 && 
-                Math.abs(pair.price_change_24h || 0) > 0.15
-            )
-            .sort((a, b) => Math.abs(b.price_change_24h || 0) - Math.abs(a.price_change_24h || 0))
+        const mockPairs = [
+            { base_token: 'So11111111111111111111111111111111111111112', price: 150 },
+            { base_token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', price: 1 }
+        ];
+        console.log('Mock pairs loaded:', mockPairs.length);
+        const filteredPairs = mockPairs
             .slice(0, maxTrades)
             .map(pair => ({
                 token: new PublicKey(pair.base_token),
@@ -47,20 +32,14 @@ async function fetchTopTokens() {
         console.log('Filtered tokens:', filteredPairs.length);
         return filteredPairs;
     } catch (error) {
-        console.error('Error fetching tokens:', error.message);
+        console.log('Error obteniendo tokens:', error.message);
         return [];
     }
 }
 
 async function getTokenPrice(tokenPubKey) {
-    try {
-        if (!cachedPairs) await fetchTopTokens();
-        const pair = cachedPairs.find(p => p.base_token === tokenPubKey.toBase58());
-        return pair ? pair.price : 1;
-    } catch (error) {
-        console.log('Error al obtener precio:', error);
-        return 1;
-    }
+    console.log(`Getting price for ${tokenPubKey.toBase58()} (mock)...`);
+    return tokenPubKey.toBase58() === 'So11111111111111111111111111111111111111112' ? 150 : 1;
 }
 
 async function buyToken(tokenPubKey) {
@@ -128,10 +107,10 @@ async function tradingBot() {
         let trades = 0;
         for (const { token } of topTokens) {
             if (trades >= maxTrades) break;
-            if (!portfolio[token.toBase58()]) {
+            if (! distressedfolio[token.toBase58()]) {
                 await buyToken(token);
                 trades++;
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Pausa de 2 segundos entre compras
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
 
@@ -146,7 +125,6 @@ async function tradingBot() {
         console.log('✔️ Ciclo de trading completado.');
     } catch (error) {
         console.error('❌ Error en el ciclo de trading:', error.message);
-        console.log('🔄 Reintentando en el próximo ciclo...');
     }
 }
 
@@ -156,8 +134,7 @@ function startBot() {
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 1200000); // 20 minutos en lugar de 10 minutos
+    }, 600000);
 }
 
 startBot();
-
