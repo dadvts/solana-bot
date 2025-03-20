@@ -5,15 +5,16 @@ const fetch = require('node-fetch');
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.default.decode);
 
-const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Mainnet
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
-let tradingCapital = 0.3; // Ajustable según tu saldo
+let tradingCapital = 0.3; // Ajusta esto al saldo real cuando lo tengas
 let savedSol = 0;
 const maxTrades = 2;
+const MIN_TRADE_AMOUNT = 0.01; // Mínimo para operar
 
 async function fetchTopTokens() {
     console.log('Fetching top tokens from Raydium...');
@@ -22,7 +23,7 @@ async function fetchTopTokens() {
         const allPairs = await response.json();
         console.log('Pairs fetched:', allPairs.length);
         const filteredPairs = allPairs
-            .slice(0, 10) // Limitar para Render
+            .slice(0, 5) // Solo 5 pares para no saturar RAM
             .filter(pair => pair.volume_24h > 500000 && Math.abs(pair.price_change_24h || 0) > 0.15)
             .slice(0, maxTrades)
             .map(pair => ({
@@ -78,18 +79,22 @@ async function tradingBot() {
     try {
         console.log('🤖 Iniciando ciclo de trading...');
         console.log(`📊 Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
-        if (tradingCapital < 0.01) {
+        if (tradingCapital < MIN_TRADE_AMOUNT) {
             console.log('🚫 Capital insuficiente para operar.');
             return;
         }
         const topTokens = await fetchTopTokens();
+        if (topTokens.length === 0) {
+            console.log('⚠️ No se encontraron tokens válidos.');
+            return;
+        }
         console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
-        const amountPerTrade = tradingCapital / maxTrades; // Ajusta según capital disponible
+        const amountPerTrade = Math.min(tradingCapital / maxTrades, tradingCapital); // Ajusta al saldo
         let trades = 0;
         for (const { token } of topTokens) {
-            if (trades >= maxTrades) break;
+            if (trades >= maxTrades || tradingCapital < MIN_TRADE_AMOUNT) break;
             if (!portfolio[token.toBase58()]) {
                 await buyToken(token, amountPerTrade);
                 trades++;
