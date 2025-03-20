@@ -11,10 +11,10 @@ const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
-let tradingCapital = 0.3; // Ajusta esto al saldo real cuando lo tengas
+let tradingCapital = 0.3; // Ajusta al saldo real cuando lo tengas
 let savedSol = 0;
 const maxTrades = 2;
-const MIN_TRADE_AMOUNT = 0.01; // Mínimo para operar
+const MIN_TRADE_AMOUNT = 0.01;
 
 async function fetchTopTokens() {
     console.log('Fetching top tokens from Raydium...');
@@ -23,9 +23,8 @@ async function fetchTopTokens() {
         const allPairs = await response.json();
         console.log('Pairs fetched:', allPairs.length);
         const filteredPairs = allPairs
-            .slice(0, 5) // Solo 5 pares para no saturar RAM
-            .filter(pair => pair.volume_24h > 500000 && Math.abs(pair.price_change_24h || 0) > 0.15)
-            .slice(0, maxTrades)
+            .slice(0, 2) // Solo 2 pares para evitar Killed
+            .filter(pair => pair.volume_24h > 500000)
             .map(pair => ({
                 token: new PublicKey(pair.base_token),
                 price: pair.price || 1
@@ -40,15 +39,13 @@ async function fetchTopTokens() {
 
 async function getTokenPrice(tokenPubKey) {
     console.log(`Getting price for ${tokenPubKey.toBase58()}...`);
-    try {
-        const response = await fetch('https://api.raydium.io/v2/main/pairs');
-        const pairs = await response.json();
-        const pair = pairs.find(p => p.base_token === tokenPubKey.toBase58());
-        return pair ? pair.price : 1;
-    } catch (error) {
-        console.log('Error al obtener precio:', error.message);
-        return 1;
-    }
+    return await fetch('https://api.raydium.io/v2/main/pairs')
+        .then(res => res.json())
+        .then(pairs => {
+            const pair = pairs.find(p => p.base_token === tokenPubKey.toBase58());
+            return pair ? pair.price : 1;
+        })
+        .catch(() => 1);
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
@@ -91,7 +88,7 @@ async function tradingBot() {
         console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
-        const amountPerTrade = Math.min(tradingCapital / maxTrades, tradingCapital); // Ajusta al saldo
+        const amountPerTrade = Math.min(tradingCapital, 0.3) / maxTrades; // Limita a 0.3 SOL max
         let trades = 0;
         for (const { token } of topTokens) {
             if (trades >= maxTrades || tradingCapital < MIN_TRADE_AMOUNT) break;
