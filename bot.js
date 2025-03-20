@@ -1,4 +1,4 @@
-const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey, Transaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 
@@ -22,7 +22,7 @@ async function fetchTopTokens() {
     try {
         const quote = await jupiterApi.quoteGet({
             inputMint: 'So11111111111111111111111111111111111111112', // SOL
-            outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC (más estable)
+            outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
             amount: Math.floor(tradingCapital * 1e9),
             slippageBps: 50
         });
@@ -50,13 +50,19 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                 wrapAndUnwrapSol: true
             }
         });
-        const tx = await connection.sendRawTransaction(Buffer.from(swap.swapTransaction, 'base64'));
-        await connection.confirmTransaction(tx);
-        console.log(`✅ Compra: ${tx} | Precio: ${quote.outAmount / 1e9} SOL`);
+        const transaction = Transaction.from(Buffer.from(swap.swapTransaction, 'base64'));
+        transaction.sign(keypair);
+        const txid = await connection.sendRawTransaction(transaction.serialize());
+        await connection.confirmTransaction(txid);
+        console.log(`✅ Compra: ${txid} | Precio: ${quote.outAmount / 1e9} SOL`);
         portfolio[tokenPubKey.toBase58()] = { buyPrice: quote.outAmount / 1e9, amount: amountPerTrade };
         tradingCapital -= amountPerTrade;
     } catch (error) {
         console.log('❌ Error en compra:', error.message);
+        if (error.getLogs) {
+            const logs = await error.getLogs(connection);
+            console.log('Logs de error:', logs);
+        }
     }
 }
 
@@ -77,11 +83,13 @@ async function sellToken(tokenPubKey) {
                 wrapAndUnwrapSol: true
             }
         });
-        const tx = await connection.sendRawTransaction(Buffer.from(swap.swapTransaction, 'base64'));
-        await connection.confirmTransaction(tx);
+        const transaction = Transaction.from(Buffer.from(swap.swapTransaction, 'base64'));
+        transaction.sign(keypair);
+        const txid = await connection.sendRawTransaction(transaction.serialize());
+        await connection.confirmTransaction(txid);
         const currentPrice = quote.outAmount / 1e9;
         const profit = (currentPrice / buyPrice - 1) * amount;
-        console.log(`✅ Venta: ${tx}`);
+        console.log(`✅ Venta: ${txid}`);
         if (profit > 0) {
             const halfProfit = profit / 2;
             savedSol += halfProfit;
@@ -94,6 +102,10 @@ async function sellToken(tokenPubKey) {
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
+        if (error.getLogs) {
+            const logs = await error.getLogs(connection);
+            console.log('Logs de error:', logs);
+        }
     }
 }
 
