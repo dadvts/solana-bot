@@ -2,10 +2,12 @@ const { Connection, Keypair, PublicKey, Transaction, SystemProgram, sendAndConfi
 const bs58 = require('bs58');
 const fetch = require('node-fetch');
 
+console.log('bs58 loaded:', bs58); // Depuración
+console.log('bs58.decode exists:', typeof bs58.decode); // Depuración
+
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
-const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
 let tradingCapital = 0.3; // ~$50 en SOL
