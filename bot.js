@@ -8,8 +8,8 @@ console.log('bs58.decode exists:', typeof bs58.default.decode);
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// Usar bs58.default.decode en lugar de bs58.decode
-const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY)); // Usar bs58.default.decode
+// Usar bs58.default.decode
+const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
@@ -21,7 +21,7 @@ async function fetchTopTokens() {
     try {
         const response = await fetch('https://api.raydium.io/v2/main/pairs');
         const pairs = await response.json();
-        console.log('Pairs fetched:', pairs.length); // Depuración
+        console.log('Pairs fetched:', pairs.length);
         const filteredPairs = pairs
             .filter(pair => 
                 pair.volume_24h > 500000 && // Volumen > $500k
@@ -34,7 +34,7 @@ async function fetchTopTokens() {
                 token: new PublicKey(pair.base_token),
                 price: pair.price
             }));
-        console.log('Filtered tokens:', filteredPairs.length); // Depuración
+        console.log('Filtered tokens:', filteredPairs.length);
         return filteredPairs;
     } catch (error) {
         console.log('Error obteniendo tokens:', error);
@@ -49,6 +49,7 @@ async function getTokenPrice(tokenPubKey) {
         const pair = pairs.find(p => p.base_token === tokenPubKey.toBase58());
         return pair ? pair.price : 1;
     } catch (error) {
+        console.log('Error al obtener precio:', error);
         return 1;
     }
 }
@@ -140,12 +141,12 @@ async function tradingBot() {
 }
 
 function startBot() {
-    console.log('Bot starting...'); // Log inicial
+    console.log('Bot starting...');
     tradingBot();
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 600000); // 10 minutos (ajustado según necesidad)
+    }, 600000); // 10 minutos
 }
 
 startBot();
