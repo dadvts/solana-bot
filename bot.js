@@ -18,10 +18,11 @@ async function fetchTopTokens() {
     try {
         const response = await fetch('https://api.raydium.io/v2/main/pairs');
         const pairs = await response.json();
-        return pairs
+        console.log('Pairs fetched:', pairs.length); // Depuración
+        const filteredPairs = pairs
             .filter(pair => 
                 pair.volume_24h > 500000 && // Volumen > $500k
-                pair.price * pair.liquidity / pair.price > 1000000 && // Market cap estimado > $1M
+                pair.price * pair.liquidity / pair.price > 1000000 && // Market cap > $1M
                 Math.abs(pair.price_change_24h || 0) > 0.15 // Volatilidad > 15%
             )
             .sort((a, b) => Math.abs(b.price_change_24h || 0) - Math.abs(a.price_change_24h || 0))
@@ -30,6 +31,8 @@ async function fetchTopTokens() {
                 token: new PublicKey(pair.base_token),
                 price: pair.price
             }));
+        console.log('Filtered tokens:', filteredPairs.length); // Depuración
+        return filteredPairs;
     } catch (error) {
         console.log('Error obteniendo tokens:', error);
         return [];
