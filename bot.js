@@ -104,15 +104,15 @@ async function tradingBot() {
         console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
-        let trades = 0;
-        for (const { token } of topTokens) {
-            if (trades >= maxTrades) break;
-            if (! distressedfolio[token.toBase58()]) {
-                await buyToken(token);
-                trades++;
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-        }
+ let trades = 0;
+for (const { token } of topTokens) {
+    if (trades >= maxTrades) break;
+    if (!portfolio[token.toBase58()]) {
+        await buyToken(token);
+        trades++;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+}
 
         for (const token in portfolio) {
             const currentPrice = await getTokenPrice(new PublicKey(token));
