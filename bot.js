@@ -17,16 +17,15 @@ const maxTrades = 1;  // Limitar aún más los trades
 const MIN_TRADE_AMOUNT = 0.01;
 
 async function fetchTopTokens() {
-    console.log('Fetching top tokens from Raydium...');
+    console.log('Fetching top token from Raydium...');
     try {
         const response = await fetch('https://api.raydium.io/v2/main/pairs');
         const allPairs = await response.json();
         console.log('Pairs fetched:', allPairs.length);
         
-        // Filtramos solo por el par con el mayor volumen 24h
+        // Tomamos solo el primer par de tokens
         const filteredPairs = allPairs
-            .sort((a, b) => b.volume_24h - a.volume_24h) // Ordenamos por volumen descendente
-            .slice(0, 1) // Solo tomamos el primero
+            .slice(0, 1) // Solo tomamos el primer par
             .map(pair => ({
                 token: new PublicKey(pair.base_token),
                 price: pair.price || 1
