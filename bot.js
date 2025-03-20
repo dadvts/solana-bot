@@ -13,7 +13,7 @@ const walletPubKey = keypair.publicKey;
 const portfolio = {};
 let tradingCapital = 0.3; // Ajusta al saldo real cuando lo tengas
 let savedSol = 0;
-const maxTrades = 2;
+const maxTrades = 1;  // Limitar aún más los trades
 const MIN_TRADE_AMOUNT = 0.01;
 
 async function fetchTopTokens() {
@@ -22,8 +22,9 @@ async function fetchTopTokens() {
         const response = await fetch('https://api.raydium.io/v2/main/pairs');
         const allPairs = await response.json();
         console.log('Pairs fetched:', allPairs.length);
+        // Filtramos para obtener solo el primer par más líquido.
         const filteredPairs = allPairs
-            .slice(0, 2) // Solo 2 pares para evitar Killed
+            .slice(0, 1)  // Solo 1 par para reducir la carga
             .filter(pair => pair.volume_24h > 500000)
             .map(pair => ({
                 token: new PublicKey(pair.base_token),
@@ -123,3 +124,4 @@ function startBot() {
 }
 
 startBot();
+
