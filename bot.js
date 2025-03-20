@@ -4,7 +4,7 @@ const bs58 = require('bs58');
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.default.decode);
 
-const connection = new Connection('https://api.devnet.solana.com', 'confirmed'); // Devnet para seguridad
+const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
@@ -41,16 +41,15 @@ async function getTokenPrice(tokenPubKey) {
     return tokenPubKey.toBase58() === 'So11111111111111111111111111111111111111112' ? 150 : 1;
 }
 
-async function buyToken(tokenPubKey) {
+async function buyToken(tokenPubKey, amountPerTrade) {
     const price = await getTokenPrice(tokenPubKey);
-    const amountPerTrade = tradingCapital / maxTrades;
     console.log(`Simulando compra ${tokenPubKey.toBase58()} a $${price} con ${amountPerTrade} SOL`);
     portfolio[tokenPubKey.toBase58()] = { buyPrice: price, amount: amountPerTrade };
     tradingCapital -= amountPerTrade;
 }
 
 async function sellToken(tokenPubKey) {
-    const currentPrice = await getTokenPrice(tokenPubKey) * (Math.random() > 0.5 ? 1.5 : 0.9); // Simula fluctuación
+    const currentPrice = await getTokenPrice(tokenPubKey) * (Math.random() > 0.5 ? 1.5 : 0.9);
     const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
     const profit = (currentPrice / buyPrice - 1) * amount;
     console.log(`Simulando venta ${tokenPubKey.toBase58()} a $${currentPrice} (compra: $${buyPrice})`);
@@ -78,11 +77,12 @@ async function tradingBot() {
         console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
+        const amountPerTrade = 0.3 / maxTrades; // Fijar 0.15 SOL por trade desde el inicio
         let trades = 0;
         for (const { token } of topTokens) {
             if (trades >= maxTrades) break;
             if (!portfolio[token.toBase58()]) {
-                await buyToken(token);
+                await buyToken(token, amountPerTrade);
                 trades++;
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
