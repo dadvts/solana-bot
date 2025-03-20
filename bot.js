@@ -3,13 +3,13 @@ const bs58 = require('bs58');
 const fetch = require('node-fetch');
 
 console.log('bs58 loaded:', bs58);
-console.log('bs58.decode exists:', typeof bs58.decode);
+console.log('bs58.decode exists:', typeof bs58.default.decode);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
-// Usar decode en lugar de decodeUnsafe
-const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY)); // Usar bs58.decode para evitar errores
+// Usar bs58.default.decode en lugar de bs58.decode
+const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY)); // Usar bs58.default.decode
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
