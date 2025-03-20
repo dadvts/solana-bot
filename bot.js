@@ -1,32 +1,33 @@
 const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
 const bs58 = require('bs58');
+const fetch = require('node-fetch');
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.default.decode);
 
-const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Mainnet
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
-let tradingCapital = 0.3;
+let tradingCapital = 0.3; // Ajustable según tu saldo
 let savedSol = 0;
 const maxTrades = 2;
 
 async function fetchTopTokens() {
-    console.log('Fetching top tokens (mock)...');
+    console.log('Fetching top tokens from Raydium...');
     try {
-        const mockPairs = [
-            { base_token: 'So11111111111111111111111111111111111111112', price: 150 },
-            { base_token: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', price: 1 }
-        ];
-        console.log('Mock pairs loaded:', mockPairs.length);
-        const filteredPairs = mockPairs
+        const response = await fetch('https://api.raydium.io/v2/main/pairs');
+        const allPairs = await response.json();
+        console.log('Pairs fetched:', allPairs.length);
+        const filteredPairs = allPairs
+            .slice(0, 10) // Limitar para Render
+            .filter(pair => pair.volume_24h > 500000 && Math.abs(pair.price_change_24h || 0) > 0.15)
             .slice(0, maxTrades)
             .map(pair => ({
                 token: new PublicKey(pair.base_token),
-                price: pair.price
+                price: pair.price || 1
             }));
         console.log('Filtered tokens:', filteredPairs.length);
         return filteredPairs;
@@ -37,8 +38,16 @@ async function fetchTopTokens() {
 }
 
 async function getTokenPrice(tokenPubKey) {
-    console.log(`Getting price for ${tokenPubKey.toBase58()} (mock)...`);
-    return tokenPubKey.toBase58() === 'So11111111111111111111111111111111111111112' ? 150 : 1;
+    console.log(`Getting price for ${tokenPubKey.toBase58()}...`);
+    try {
+        const response = await fetch('https://api.raydium.io/v2/main/pairs');
+        const pairs = await response.json();
+        const pair = pairs.find(p => p.base_token === tokenPubKey.toBase58());
+        return pair ? pair.price : 1;
+    } catch (error) {
+        console.log('Error al obtener precio:', error.message);
+        return 1;
+    }
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
@@ -49,7 +58,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
 }
 
 async function sellToken(tokenPubKey) {
-    const currentPrice = await getTokenPrice(tokenPubKey) * (Math.random() > 0.5 ? 1.5 : 0.9);
+    const currentPrice = await getTokenPrice(tokenPubKey);
     const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
     const profit = (currentPrice / buyPrice - 1) * amount;
     console.log(`Simulando venta ${tokenPubKey.toBase58()} a $${currentPrice} (compra: $${buyPrice})`);
@@ -70,14 +79,14 @@ async function tradingBot() {
         console.log('🤖 Iniciando ciclo de trading...');
         console.log(`📊 Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         if (tradingCapital < 0.01) {
-            console.log('🚫 Capital insuficiente.');
+            console.log('🚫 Capital insuficiente para operar.');
             return;
         }
         const topTokens = await fetchTopTokens();
         console.log('📡 Buscando mejores tokens...');
         console.log('Tokens obtenidos:', topTokens.length);
 
-        const amountPerTrade = 0.3 / maxTrades; // Fijar 0.15 SOL por trade desde el inicio
+        const amountPerTrade = tradingCapital / maxTrades; // Ajusta según capital disponible
         let trades = 0;
         for (const { token } of topTokens) {
             if (trades >= maxTrades) break;
@@ -89,7 +98,7 @@ async function tradingBot() {
         }
 
         for (const token in portfolio) {
-            const currentPrice = await getTokenPrice(new PublicKey(token)) * (Math.random() > 0.5 ? 1.5 : 0.9);
+            const currentPrice = await getTokenPrice(new PublicKey(token));
             const { buyPrice } = portfolio[token];
             if (currentPrice >= buyPrice * 1.30 || currentPrice <= buyPrice * 0.95) {
                 await sellToken(new PublicKey(token));
