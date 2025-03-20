@@ -22,10 +22,11 @@ async function fetchTopTokens() {
         const response = await fetch('https://api.raydium.io/v2/main/pairs');
         const allPairs = await response.json();
         console.log('Pairs fetched:', allPairs.length);
-        // Filtramos para obtener solo el primer par más líquido.
+        
+        // Filtramos solo por el par con el mayor volumen 24h
         const filteredPairs = allPairs
-            .slice(0, 1)  // Solo 1 par para reducir la carga
-            .filter(pair => pair.volume_24h > 500000)
+            .sort((a, b) => b.volume_24h - a.volume_24h) // Ordenamos por volumen descendente
+            .slice(0, 1) // Solo tomamos el primero
             .map(pair => ({
                 token: new PublicKey(pair.base_token),
                 price: pair.price || 1
