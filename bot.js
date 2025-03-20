@@ -119,7 +119,7 @@ function startBot() {
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 600000);
+    }, 600000); // 10 minutos entre ciclos
 }
 
 startBot();
