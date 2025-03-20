@@ -3,11 +3,11 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 
 console.log('bs58 loaded:', bs58);
-console.log('bs58.decode exists:', typeof bs58.default.decode);
+console.log('bs58.decode exists:', typeof bs58.decode);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
+const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const jupiterApi = createJupiterApiClient();
@@ -22,7 +22,7 @@ async function fetchTopTokens() {
     try {
         const quote = await jupiterApi.quoteGet({
             inputMint: 'So11111111111111111111111111111111111111112', // SOL
-            outputMint: '7xKXtzSsc1uPucxW9VpjeXCqiYxnmX2rcza7GW2aM5R', // RAY (ejemplo)
+            outputMint: '7xKXtzSsc1uPucxW9VpjeXCqiYxnmX2rcza7GW2aM5R', // RAY (ejemplo volátil)
             amount: Math.floor(tradingCapital * 1e9),
             slippageBps: 50
         });
@@ -123,32 +123,4 @@ async function tradingBot() {
             }
         }
 
-        for (const token in portfolio) {
-            const quote = await jupiterApi.quoteGet({
-                inputMint: token,
-                outputMint: 'So11111111111111111111111111111111111111112',
-                amount: Math.floor(portfolio[token].amount / portfolio[token].buyPrice * 1e9)
-            });
-            const currentPrice = quote.outAmount / 1e9;
-            const { buyPrice } = portfolio[token];
-            if (currentPrice >= buyPrice * 1.50 || currentPrice <= buyPrice * 0.90) {
-                await sellToken(new PublicKey(token));
-            }
-        }
-
-        console.log('✔️ Ciclo de trading completado.');
-    } catch (error) {
-        console.error('❌ Error en el ciclo:', error.message);
-    }
-}
-
-function startBot() {
-    console.log('🚀 Bot starting...');
-    tradingBot();
-    setInterval(() => {
-        console.log('🔄 Nuevo ciclo iniciando...');
-        tradingBot();
-    }, 60000);
-}
-
-startBot();
+        for (
