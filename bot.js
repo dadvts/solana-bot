@@ -7,26 +7,31 @@ console.log('bs58.decode exists:', typeof bs58.default.decode);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-
-// Usar bs58.default.decode
 const keypair = Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const portfolio = {};
-let tradingCapital = 0.3; // ~$50 en SOL
+let tradingCapital = 0.3;
 let savedSol = 0;
 const maxTrades = 2;
+let cachedPairs = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 600000;
 
 async function fetchTopTokens() {
     try {
-        const response = await fetch('https://api.raydium.io/v2/main/pairs');
-        const pairs = await response.json();
-        console.log('Pairs fetched:', pairs.length);
-        const filteredPairs = pairs
+        const now = Date.now();
+        if (!cachedPairs || now - lastFetchTime > CACHE_DURATION) {
+            const response = await fetch('https://api.raydium.io/v2/main/pairs');
+            cachedPairs = await response.json();
+            lastFetchTime = now;
+            console.log('Pairs fetched:', cachedPairs.length);
+        }
+        const filteredPairs = cachedPairs
             .filter(pair => 
-                pair.volume_24h > 500000 && // Volumen > $500k
-                pair.price * pair.liquidity / pair.price > 1000000 && // Market cap > $1M
-                Math.abs(pair.price_change_24h || 0) > 0.15 // Volatilidad > 15%
+                pair.volume_24h > 500000 && 
+                pair.price * pair.liquidity / pair.price > 1000000 && 
+                Math.abs(pair.price_change_24h || 0) > 0.15
             )
             .sort((a, b) => Math.abs(b.price_change_24h || 0) - Math.abs(a.price_change_24h || 0))
             .slice(0, maxTrades)
@@ -44,9 +49,8 @@ async function fetchTopTokens() {
 
 async function getTokenPrice(tokenPubKey) {
     try {
-        const response = await fetch('https://api.raydium.io/v2/main/pairs');
-        const pairs = await response.json();
-        const pair = pairs.find(p => p.base_token === tokenPubKey.toBase58());
+        if (!cachedPairs) await fetchTopTokens();
+        const pair = cachedPairs.find(p => p.base_token === tokenPubKey.toBase58());
         return pair ? pair.price : 1;
     } catch (error) {
         console.log('Error al obtener precio:', error);
@@ -67,10 +71,10 @@ async function buyToken(tokenPubKey) {
     );
     try {
         const signature = await sendAndConfirmTransaction(connection, transaction, [keypair]);
-        console.log(`Compra: ${signature}`);
+        console.log(`✅ Compra: ${signature}`);
         portfolio[tokenPubKey.toBase58()] = { buyPrice: price, amount: amountPerTrade };
     } catch (error) {
-        console.log('Error compra:', error);
+        console.log('❌ Error compra:', error.message);
     }
 }
 
@@ -88,19 +92,19 @@ async function sellToken(tokenPubKey) {
     );
     try {
         const signature = await sendAndConfirmTransaction(connection, transaction, [keypair]);
-        console.log(`Venta: ${signature}`);
+        console.log(`✅ Venta: ${signature}`);
         if (profit > 0) {
             const halfProfit = profit / 2;
             savedSol += halfProfit;
             tradingCapital += halfProfit;
-            console.log(`Ganancia: ${profit} SOL | Guardado: ${savedSol} SOL | Capital: ${tradingCapital} SOL`);
+            console.log(`📈 Ganancia: ${profit} SOL | Guardado: ${savedSol} SOL | Capital: ${tradingCapital} SOL`);
         } else if (profit < 0) {
-            tradingCapital += profit; // Resta pérdida
-            console.log(`Pérdida: ${profit} SOL | Capital: ${tradingCapital} SOL`);
+            tradingCapital += profit;
+            console.log(`📉 Pérdida: ${profit} SOL | Capital: ${tradingCapital} SOL`);
         }
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
-        console.log('Error venta:', error);
+        console.log('❌ Error venta:', error.message);
     }
 }
 
@@ -109,7 +113,7 @@ async function tradingBot() {
         console.log('🤖 Iniciando ciclo de trading...');
         console.log(`📊 Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         if (tradingCapital < 0.01) {
-            console.log('🚫 Capital insuficiente. Deteniendo bot.');
+            console.log('🚫 Capital insuficiente. Reintentando en el próximo ciclo.');
             return;
         }
         const topTokens = await fetchTopTokens();
@@ -118,7 +122,7 @@ async function tradingBot() {
 
         let trades = 0;
         for (const { token } of topTokens) {
-            if (trades >= maxTrades) break; // Limitar el número de tokens a procesar
+            if (trades >= maxTrades) break;
             if (!portfolio[token.toBase58()]) {
                 await buyToken(token);
                 trades++;
@@ -136,17 +140,18 @@ async function tradingBot() {
 
         console.log('✔️ Ciclo de trading completado.');
     } catch (error) {
-        console.error('❌ Error en el ciclo de trading:', error);
+        console.error('❌ Error en el ciclo de trading:', error.message);
+        console.log('🔄 Reintentando en el próximo ciclo...');
     }
 }
 
 function startBot() {
-    console.log('Bot starting...');
+    console.log('🚀 Bot starting...');
     tradingBot();
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 600000); // 10 minutos
+    }, 600000);
 }
 
 startBot();
