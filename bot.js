@@ -13,40 +13,13 @@ const walletPubKey = keypair.publicKey;
 const portfolio = {};
 let tradingCapital = 0.3; // Ajusta al saldo real cuando lo tengas
 let savedSol = 0;
-const maxTrades = 1;  // Limitar aún más los trades
+const maxTrades = 1;
 const MIN_TRADE_AMOUNT = 0.01;
 
-async function fetchTopTokens() {
-    console.log('Fetching top token from Raydium...');
-    try {
-        const response = await fetch('https://api.raydium.io/v2/main/pairs');
-        const allPairs = await response.json();
-        console.log('Pairs fetched:', allPairs.length);
-        
-        // Tomamos solo el primer par de tokens
-        const filteredPairs = allPairs
-            .slice(0, 1) // Solo tomamos el primer par
-            .map(pair => ({
-                token: new PublicKey(pair.base_token),
-                price: pair.price || 1
-            }));
-        console.log('Filtered tokens:', filteredPairs.length);
-        return filteredPairs;
-    } catch (error) {
-        console.log('Error obteniendo tokens:', error.message);
-        return [];
-    }
-}
-
 async function getTokenPrice(tokenPubKey) {
-    console.log(`Getting price for ${tokenPubKey.toBase58()}...`);
-    return await fetch('https://api.raydium.io/v2/main/pairs')
-        .then(res => res.json())
-        .then(pairs => {
-            const pair = pairs.find(p => p.base_token === tokenPubKey.toBase58());
-            return pair ? pair.price : 1;
-        })
-        .catch(() => 1);
+    // Simulamos obtener el precio de un token con un valor fijo
+    console.log(`Simulando obtención de precio para ${tokenPubKey.toBase58()}...`);
+    return 1.0; // Precio fijo
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
@@ -81,15 +54,12 @@ async function tradingBot() {
             console.log('🚫 Capital insuficiente para operar.');
             return;
         }
-        const topTokens = await fetchTopTokens();
-        if (topTokens.length === 0) {
-            console.log('⚠️ No se encontraron tokens válidos.');
-            return;
-        }
-        console.log('📡 Buscando mejores tokens...');
+
+        // Usamos un token ficticio predefinido
+        const topTokens = [{ token: new PublicKey('4p4rJ84u1M7oy9pffas1oUHVQd5Jh7PQt8uHHqv9eHLf'), price: 1 }];
         console.log('Tokens obtenidos:', topTokens.length);
 
-        const amountPerTrade = Math.min(tradingCapital, 0.3) / maxTrades; // Limita a 0.3 SOL max
+        const amountPerTrade = Math.min(tradingCapital, 0.3) / maxTrades;
         let trades = 0;
         for (const { token } of topTokens) {
             if (trades >= maxTrades || tradingCapital < MIN_TRADE_AMOUNT) break;
@@ -120,7 +90,7 @@ function startBot() {
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 600000); // 10 minutos entre ciclos
+    }, 600000);
 }
 
 startBot();
