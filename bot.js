@@ -6,7 +6,7 @@ const {
     SystemProgram, 
     sendAndConfirmTransaction 
 } = require('@solana/web3.js');
-const bs58 = require('bs58');
+const bs58 = require('bs58').default;
 const fetch = require('node-fetch');
 
 console.log('bs58 loaded:', bs58);
