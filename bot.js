@@ -23,10 +23,13 @@ async function fetchTopTokens() {
         const now = Date.now();
         if (!cachedPairs || now - lastFetchTime > CACHE_DURATION) {
             const response = await fetch('https://api.raydium.io/v2/main/pairs');
-            cachedPairs = await response.json();
+            cachedPairs = (await response.json()).slice(0, 100); // Limitar a 100 pares
             lastFetchTime = now;
             console.log('Pairs fetched:', cachedPairs.length);
+        } else {
+            console.log('Using cached pairs:', cachedPairs.length);
         }
+        console.log('Filtering pairs...');
         const filteredPairs = cachedPairs
             .filter(pair => 
                 pair.volume_24h > 500000 && 
@@ -42,11 +45,10 @@ async function fetchTopTokens() {
         console.log('Filtered tokens:', filteredPairs.length);
         return filteredPairs;
     } catch (error) {
-        console.log('Error obteniendo tokens:', error);
+        console.log('Error obteniendo tokens:', error.message);
         return [];
     }
 }
-
 async function getTokenPrice(tokenPubKey) {
     try {
         if (!cachedPairs) await fetchTopTokens();
