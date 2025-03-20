@@ -99,7 +99,7 @@ async function sellToken(tokenPubKey) {
             tradingCapital += profit + amount;
             console.log(`📉 Pérdida: ${profit} SOL | Capital: ${tradingCapital} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()]);
+        delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
         if (error.getLogs) {
