@@ -30,7 +30,7 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.041362381730141e-7 // Actualizado con el último ciclo
+    lastPrice: 1.041362381730141e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
@@ -170,7 +170,7 @@ async function sellToken(tokenPubKey) {
         console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
         tradingCapital += solReceived;
         console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL`);
-        delete portfolio[tokenPubKey.toBase58()]);
+        delete portfolio[tokenPubKey.toBase58()]; // Corregido: sin paréntesis extra
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
         if (error.getLogs) {
