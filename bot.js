@@ -34,7 +34,7 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: INITIAL_INVESTMENT / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0415398456093406e-7 // Último ciclo
+    lastPrice: 1.0375541554847133e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
@@ -42,8 +42,7 @@ async function updateVolatileTokens() {
     try {
         const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
             params: {
-                q: 'sol', // Buscar pares con SOL como base o quote
-                chainIds: 'solana'
+                chainIds: 'solana' // Solo Solana, sin filtro 'q'
             }
         });
         const pairs = response.data.pairs || [];
@@ -53,7 +52,8 @@ async function updateVolatileTokens() {
             .filter(pair => {
                 const marketCap = pair.fdv; // Fully Diluted Valuation
                 const volume = pair.volume.h24;
-                return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 50000;
+                console.log(`Par: ${pair.baseToken.symbol} | MarketCap: ${marketCap} | Volumen: ${volume}`);
+                return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 10000; // Relajado a $10k
             })
             .map(pair => pair.baseToken.address)
             .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index); // Eliminar duplicados
