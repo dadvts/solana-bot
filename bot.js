@@ -12,11 +12,17 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const jupiterApi = createJupiterApiClient();
-const portfolio = {};
-let tradingCapital = 0;
+const portfolio = {
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
+        buyPrice: 0.14 / 13391.45752205, // 1.0454425873321102e-5 SOL/ATLAS
+        amount: 13250, // ATLAS restantes
+        lastPrice: 1.038866753457791e-5 // Corregido a e-5
+    }
+};
+let tradingCapital = 0.0126; // SOL en billetera
 let savedSol = 0;
-const MIN_TRADE_AMOUNT = 0.02;
-const INITIAL_INVESTMENT = 0.14; // Corregido a 0.14 SOL
+const MIN_TRADE_AMOUNT = 0.01; // Ajustado a capital disponible
+const INITIAL_INVESTMENT = 0.14;
 const TARGET_THRESHOLD = 0.3;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
@@ -30,19 +36,12 @@ let volatileTokens = [
     'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'  // SLND
 ];
 
-// Estado inicial corregido
-portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
-    buyPrice: INITIAL_INVESTMENT / 13391.45752205, // ~1.0454425873321102e-5 SOL/ATLAS
-    amount: 13391.45752205,
-    lastPrice: 1.0349949493681595e-7 // Último ciclo
-};
-
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
         const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
             params: {
-                q: 'sol', // Buscar pares con SOL
+                q: 'sol',
                 chainIds: 'solana'
             }
         });
@@ -55,10 +54,10 @@ async function updateVolatileTokens() {
                 const marketCap = pair.fdv;
                 const volume = pair.volume.h24;
                 console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | Chain: ${pair.chainId} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return isSolana && marketCap >= 1000000 && marketCap <= 100000000 && volume >= 10000;
+                return isSolana && marketCap >= 50000 && marketCap <= 200000000 && volume >= 1000; // Filtros muy relajados
             })
             .map(pair => pair.baseToken.address)
-            .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index); // Eliminar duplicados
+            .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
 
         console.log(`Tokens de Solana filtrados: ${solanaTokens.length}`);
         if (solanaTokens.length > 0) {
@@ -118,6 +117,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             amount: Math.floor(amountPerTrade * 1e9),
             slippageBps: 50
         });
+        const tokenAmount = quote.outAmount / 1e6;
         const swap = await jupiterApi.swapPost({
             swapRequest: {
                 quoteResponse: quote,
@@ -129,7 +129,6 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
-        const tokenAmount = quote.outAmount / 1e6;
         console.log(`✅ Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
         portfolio[tokenPubKey.toBase58()] = { 
             buyPrice: amountPerTrade / tokenAmount, 
@@ -205,7 +204,7 @@ async function tradingBot() {
                 outputMint: 'So11111111111111111111111111111111111111112',
                 amount: Math.floor(portfolio[token].amount * 1e6)
             });
-            const currentPrice = quote.outAmount / 1e9 / portfolio[token].amount;
+            const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount; // Normalizado a SOL/ATLAS
             const { buyPrice, lastPrice } = portfolio[token];
             console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL | Precio anterior: ${lastPrice} SOL`);
 
@@ -219,8 +218,9 @@ async function tradingBot() {
                 } else {
                     console.log(`Tendencia alcista detectada (${(growthVsLast * 100).toFixed(2)}% vs anterior). Esperando...`);
                 }
+            } else {
+                portfolio[token].lastPrice = currentPrice; // Actualizar solo si no se vende
             }
-            portfolio[token].lastPrice = currentPrice;
         }
 
         console.log('✔️ Ciclo de trading completado.');
