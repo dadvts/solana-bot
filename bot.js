@@ -34,18 +34,22 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: INITIAL_INVESTMENT / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0390340840113408e-7 // Último ciclo
+    lastPrice: 1.0381297164337219e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
-            params: {
-                q: 'solana', // Búsqueda genérica para Solana
-                chainIds: 'solana'
-            }
-        });
+        // Lista de pares populares en Solana (ejemplos reales de Raydium/Orca)
+        const popularPairs = [
+            '7XawhbbxtsW4LD69BXLbGsLHMQUNaMBdKqeH4F3XYwDd', // ATLAS-SOL
+            'HCPJoU9UEzv5Q9A9C9vKFjpguS65hns4MgGjaDLdmgv', // SAMO-SOL
+            'EvoDCdR2MSg3NPmTL1eSeku3edjr9kra7BXA9XT2aZQt', // GST-SOL
+            '9eGNc4BZefQwRdFoK8RuEHt3uXJJEZrhvjpFXsLNSW37', // STEP-SOL
+            'FidGusnzr6tH8QfSQ429k2p53eoAqKRD2R8Y3dqZQsJ9' // SLND-SOL
+        ].join(',');
+        
+        const response = await axios.get(`https://api.dexscreener.com/latest/dex/pairs/solana/${popularPairs}`);
         const pairs = response.data.pairs || [];
         console.log(`Total pares obtenidos: ${pairs.length}`);
 
