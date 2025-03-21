@@ -175,7 +175,7 @@ async function sellToken(tokenPubKey) {
             tradingCapital += solReceived;
             console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()]);
+        delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
     }
