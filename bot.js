@@ -34,16 +34,16 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: INITIAL_INVESTMENT / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0421951663603157e-7 // Último ciclo
+    lastPrice: 1.0415398456093406e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/multi', {
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
             params: {
-                chainIds: 'solana',
-                tokenAddresses: '' // Obtener todos los tokens de Solana
+                q: 'sol', // Buscar pares con SOL como base o quote
+                chainIds: 'solana'
             }
         });
         const pairs = response.data.pairs || [];
@@ -51,7 +51,7 @@ async function updateVolatileTokens() {
 
         const solanaTokens = pairs
             .filter(pair => {
-                const marketCap = pair.fdv; // Fully Diluted Valuation como proxy de market cap
+                const marketCap = pair.fdv; // Fully Diluted Valuation
                 const volume = pair.volume.h24;
                 return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 50000;
             })
@@ -175,7 +175,7 @@ async function sellToken(tokenPubKey) {
             tradingCapital += solReceived;
             console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()];
+        delete portfolio[tokenPubKey.toBase58()]);
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
     }
