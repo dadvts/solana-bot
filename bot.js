@@ -1,7 +1,7 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
-const axios = require('axios'); // Nueva dependencia para API calls
+const axios = require('axios');
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.decode);
@@ -32,7 +32,7 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0447681051119987e-7 // Último ciclo
+    lastPrice: 1.0383472431663577e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
@@ -42,30 +42,32 @@ async function updateVolatileTokens() {
             params: {
                 vs_currency: 'usd',
                 order: 'market_cap_desc',
-                per_page: 250, // Máximo por página
+                per_page: 250,
                 page: 1,
-                sparkline: false,
-                platform: 'solana' // Filtrar por Solana
+                sparkline: false
             }
         });
-        const tokens = response.data
+        const solanaTokens = response.data
             .filter(token => {
                 const marketCap = token.market_cap;
                 const volume = token.total_volume;
-                return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 100000;
+                const hasSolanaAddress = token.platforms && token.platforms['solana'];
+                return hasSolanaAddress && marketCap >= 1000000 && marketCap <= 100000000 && volume >= 100000;
             })
-            .map(token => token.contract_address) // Mint address en Solana
-            .filter(address => address && address.length === 44); // Validar longitud de mint
+            .map(token => token.platforms['solana']) // Obtener mint address de Solana
+            .filter(address => address && address.length === 44); // Validar longitud
 
-        if (tokens.length > 0) {
-            volatileTokens = tokens.slice(0, 10); // Limitar a 10 tokens
+        if (solanaTokens.length > 0) {
+            volatileTokens = solanaTokens.slice(0, 10);
             console.log('Lista actualizada:', volatileTokens);
         } else {
-            console.log('No se encontraron tokens válidos. Usando lista previa.');
+            console.log('No se encontraron tokens válidos de Solana. Usando lista previa.');
+            volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
+            console.log('Lista rotada (fallback):', volatileTokens);
         }
     } catch (error) {
         console.log('Error actualizando con CoinGecko:', error.message);
-        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]); // Rotar como fallback
+        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
         console.log('Lista rotada (fallback):', volatileTokens);
     }
 }
