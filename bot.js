@@ -12,12 +12,12 @@ const walletPubKey = keypair.publicKey;
 
 const jupiterApi = createJupiterApiClient();
 const portfolio = {};
-let tradingCapital = 0; // Actualizado tras la compra
+let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.02;
-const CYCLE_INTERVAL = 900000; // 15 minutos en ms
+const CYCLE_INTERVAL = 600000; // 10 minutos en ms
 
-// Lista viva de tokens (inicial)
+// Lista viva de tokens
 let volatileTokens = [
     'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL', // STEP
     'kinXdEcpDQeHPEuQnqmUgtYvK2sjDarPRCVCEnnExST', // KIN
@@ -26,39 +26,42 @@ let volatileTokens = [
     'poLisWXnNRwC6oBu1vHciRGY3KG3J4Gnc57HbDQNDDKL' // POLIS
 ];
 
-// Estado inicial tras tu compra
+// Estado inicial con tu compra
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
-    amount: 1339145.752205
+    amount: 1339145.752205,
+    lastPrice: 0 // Precio anterior, inicia en 0
 };
 
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles...');
     const newTokens = [];
     try {
-        const candidates = volatileTokens.concat(getRandomTokens(5));
+        const candidates = volatileTokens.slice(0, 3).concat(getRandomTokens(2));
         for (const tokenMint of candidates) {
             const quote = await jupiterApi.quoteGet({
                 inputMint: 'So11111111111111111111111111111111111111112',
                 outputMint: tokenMint,
-                amount: Math.floor(0.1 * 1e9), // Prueba con 0.1 SOL
+                amount: Math.floor(0.1 * 1e9),
                 slippageBps: 50
             });
             const tokenAmount = quote.outAmount / 1e6;
             const pricePerSol = tokenAmount / 0.1;
-            const marketCapEstimate = pricePerSol * 40000000; // Aproximación
+            const marketCapEstimate = pricePerSol * 40000000;
             if (marketCapEstimate > 1000000 && marketCapEstimate < 100000000) {
                 newTokens.push(tokenMint);
             }
         }
         if (newTokens.length > 0) {
-            volatileTokens = newTokens.slice(0, 10);
+            volatileTokens = newTokens.concat(volatileTokens).slice(0, 10);
             console.log('Lista actualizada:', volatileTokens);
         } else {
-            console.log('No se encontraron nuevos tokens válidos. Manteniendo lista actual.');
+            console.log('No se encontraron nuevos tokens válidos.');
         }
     } catch (error) {
         console.log('Error actualizando tokens:', error.message);
+        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
+        console.log('Lista rotada:', volatileTokens);
     }
 }
 
@@ -126,7 +129,11 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         await connection.confirmTransaction(txid);
         const tokenAmount = quote.outAmount / 1e6;
         console.log(`✅ Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
-        portfolio[tokenPubKey.toBase58()] = { buyPrice: amountPerTrade / tokenAmount, amount: tokenAmount };
+        portfolio[tokenPubKey.toBase58()] = { 
+            buyPrice: amountPerTrade / tokenAmount, 
+            amount: tokenAmount, 
+            lastPrice: 0 // Inicializar lastPrice
+        };
         tradingCapital -= amountPerTrade;
     } catch (error) {
         console.log('❌ Error en compra:', error.message);
@@ -198,11 +205,21 @@ async function tradingBot() {
                 amount: Math.floor(portfolio[token].amount * 1e6)
             });
             const currentPrice = quote.outAmount / 1e9 / portfolio[token].amount;
-            const { buyPrice } = portfolio[token];
-            console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL`);
-            if (currentPrice >= buyPrice * 1.20 || currentPrice <= buyPrice * 0.95) {
+            const { buyPrice, lastPrice } = portfolio[token];
+            console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL | Precio anterior: ${lastPrice} SOL`);
+
+            const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity; // Evitar división por 0
+
+            if (currentPrice <= buyPrice * 0.97) { // Stop-loss -3%
                 await sellToken(new PublicKey(token));
+            } else if (currentPrice >= buyPrice * 1.10) { // Ganancia ≥10%
+                if (growthVsLast <= 0) { // Crecimiento igual o menor que el anterior
+                    await sellToken(new PublicKey(token));
+                } else {
+                    console.log(`Tendencia alcista detectada (${(growthVsLast * 100).toFixed(2)}% vs anterior). Esperando...`);
+                }
             }
+            portfolio[token].lastPrice = currentPrice; // Actualizar precio anterior
         }
 
         console.log('✔️ Ciclo de trading completado.');
