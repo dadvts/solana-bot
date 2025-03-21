@@ -1,7 +1,6 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
-const axios = require('axios'); // Para obtener datos de mercado
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.decode);
@@ -16,51 +15,86 @@ const portfolio = {};
 let tradingCapital = 0.14; // Capital actual
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.02;
+const CYCLE_INTERVAL = 900000; // 15 minutos en ms
 
-// Lista inicial de tokens volátiles con market cap >$1M
-const volatileTokens = [
+// Lista inicial de tokens candidatos (se actualizará dinámicamente)
+let volatileTokens = [
     'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL', // STEP
     'kinXdEcpDQeHPEuQnqmUgtYvK2sjDarPRCVCEnnExST', // KIN
     'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN', // SLND
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
+    'poLisWXnNRwC6oBu1vHciRGY3KG3J4Gnc57HbDQNDDKL' // POLIS
 ];
 
-async function fetchVolatileToken() {
-    console.log('Buscando token volátil con alto volumen...');
+async function updateVolatileTokens() {
+    console.log('Actualizando lista de tokens volátiles...');
+    const newTokens = [];
     try {
-        // Obtener datos de mercado desde CoinGecko (alternativa: CoinMarketCap API si tienes key)
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
-            params: {
-                vs_currency: 'usd',
-                ids: 'step-app,kin,solend', // IDs de CoinGecko para STEP, KIN, SLND
-                order: 'volume_desc',
-                per_page: 10,
-                page: 1,
-                sparkline: false
-            }
-        });
-        const tokens = response.data.filter(token => 
-            token.market_cap > 1000000 && token.total_volume > 500000
-        );
-        if (tokens.length === 0) throw new Error('No se encontraron tokens con volumen suficiente');
-        
-        const selectedToken = tokens[0]; // El de mayor volumen
-        const tokenMint = volatileTokens.find(mint => 
-            mint.includes(selectedToken.symbol.toUpperCase()) || mint === selectedToken.id
-        );
-        if (!tokenMint) throw new Error('Token no soportado en la lista');
+        // Simulamos un análisis de volumen y market cap con Jupiter (limitado por simplicidad)
+        for (const tokenMint of volatileTokens.concat(getRandomTokens(5))) {
+            const quote = await jupiterApi.quoteGet({
+                inputMint: 'So11111111111111111111111111111111111111112',
+                outputMint: tokenMint,
+                amount: Math.floor(0.1 * 1e9), // Prueba con 0.1 SOL
+                slippageBps: 50
+            });
+            const tokenAmount = quote.outAmount / 1e6;
+            const pricePerSol = tokenAmount / 0.1;
+            const marketCapEstimate = pricePerSol * 40000000; // Aproximación burda (total supply típico)
+            const volumeEstimate = tokenAmount * 1000; // Simulación de volumen
 
-        const quote = await jupiterApi.quoteGet({
-            inputMint: 'So11111111111111111111111111111111111111112', // SOL
-            outputMint: tokenMint,
-            amount: Math.floor(tradingCapital * 1e9),
-            slippageBps: 50
-        });
-        console.log('Quote received:', quote);
-        return { token: new PublicKey(tokenMint), price: quote.outAmount / 1e6 };
+            if (marketCapEstimate > 1000000 && marketCapEstimate < 100000000 && volumeEstimate > 100000) {
+                newTokens.push({ mint: tokenMint, pricePerSol, volume: volumeEstimate });
+            }
+        }
+        volatileTokens = newTokens.sort((a, b) => b.volume - a.volume).slice(0, 10).map(t => t.mint);
+        console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
-        console.log('Error buscando token:', error.message);
+        console.log('Error actualizando tokens:', error.message);
+    }
+}
+
+// Genera tokens aleatorios para simular dinámica (en producción, usar datos reales)
+function getRandomTokens(count) {
+    const knownTokens = [
+        '7xKXtzSsc1uPucxW9VpjeXCqiYxnmX2rcza7GW2aM5R', // RAY
+        'SRMuApVNdxXokk5GT7XD5cUUgXMBCoAz2LHeuAoKWRt', // SRM
+        'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE' // ORCA
+    ];
+    return knownTokens.sort(() => 0.5 - Math.random()).slice(0, count);
+}
+
+async function selectBestToken() {
+    console.log('Analizando tokens volátiles...');
+    let bestToken = null;
+    let highestVolume = 0;
+
+    for (const tokenMint of volatileTokens) {
+        try {
+            const quote = await jupiterApi.quoteGet({
+                inputMint: 'So11111111111111111111111111111111111111112',
+                outputMint: tokenMint,
+                amount: Math.floor(tradingCapital * 1e9),
+                slippageBps: 50
+            });
+            const tokenAmount = quote.outAmount / 1e6;
+            const volumeEstimate = tokenAmount * 1000; // Proxy de volumen
+            console.log(`Token: ${tokenMint} | Volumen estimado: ${volumeEstimate}`);
+            if (volumeEstimate > highestVolume) {
+                highestVolume = volumeEstimate;
+                bestToken = { token: new PublicKey(tokenMint), price: tokenAmount };
+            }
+        } catch (error) {
+            console.log(`Error con ${tokenMint}:`, error.message);
+        }
+    }
+
+    if (!bestToken) {
+        console.log('⚠️ No se encontró token válido.');
         return null;
     }
+    console.log('Mejor token seleccionado:', bestToken.token.toBase58());
+    return bestToken;
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
@@ -120,7 +154,7 @@ async function sellToken(tokenPubKey) {
         const solReceived = quote.outAmount / 1e9;
         const profit = solReceived - (amount * buyPrice);
         console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
-        tradingCapital += solReceived; // Reinvertir todo
+        tradingCapital += solReceived;
         console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL`);
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
@@ -141,13 +175,11 @@ async function tradingBot() {
             return;
         }
 
+        await updateVolatileTokens(); // Actualiza la lista viva
+
         if (Object.keys(portfolio).length === 0) {
-            const token = await fetchVolatileToken();
-            if (!token) {
-                console.log('⚠️ No se encontró token válido.');
-                return;
-            }
-            console.log('📡 Seleccionado token:', token.token.toBase58());
+            const token = await selectBestToken();
+            if (!token) return;
             await buyToken(token.token, tradingCapital);
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
@@ -160,7 +192,7 @@ async function tradingBot() {
             });
             const currentPrice = quote.outAmount / 1e9 / portfolio[token].amount;
             const { buyPrice } = portfolio[token];
-            console.log(`Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL`);
+            console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL`);
             if (currentPrice >= buyPrice * 1.20 || currentPrice <= buyPrice * 0.95) {
                 await sellToken(new PublicKey(token));
             }
@@ -178,7 +210,7 @@ function startBot() {
     setInterval(() => {
         console.log('🔄 Nuevo ciclo iniciando...');
         tradingBot();
-    }, 60000);
+    }, CYCLE_INTERVAL); // 15 minutos
 }
 
 startBot();
