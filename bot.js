@@ -16,7 +16,7 @@ const portfolio = {};
 let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.02;
-const INITIAL_INVESTMENT = 0.14;
+const INITIAL_INVESTMENT = 0.14; // Corregido a 0.14 SOL
 const TARGET_THRESHOLD = 0.3;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
@@ -30,35 +30,32 @@ let volatileTokens = [
     'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'  // SLND
 ];
 
-// Estado inicial con tu compra
+// Estado inicial corregido
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
-    buyPrice: INITIAL_INVESTMENT / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
-    amount: 1339145.752205,
-    lastPrice: 1.0381297164337219e-7 // Último ciclo
+    buyPrice: INITIAL_INVESTMENT / 13391.45752205, // ~1.0454425873321102e-5 SOL/ATLAS
+    amount: 13391.45752205,
+    lastPrice: 1.0349949493681595e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
-        // Lista de pares populares en Solana (ejemplos reales de Raydium/Orca)
-        const popularPairs = [
-            '7XawhbbxtsW4LD69BXLbGsLHMQUNaMBdKqeH4F3XYwDd', // ATLAS-SOL
-            'HCPJoU9UEzv5Q9A9C9vKFjpguS65hns4MgGjaDLdmgv', // SAMO-SOL
-            'EvoDCdR2MSg3NPmTL1eSeku3edjr9kra7BXA9XT2aZQt', // GST-SOL
-            '9eGNc4BZefQwRdFoK8RuEHt3uXJJEZrhvjpFXsLNSW37', // STEP-SOL
-            'FidGusnzr6tH8QfSQ429k2p53eoAqKRD2R8Y3dqZQsJ9' // SLND-SOL
-        ].join(',');
-        
-        const response = await axios.get(`https://api.dexscreener.com/latest/dex/pairs/solana/${popularPairs}`);
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
+            params: {
+                q: 'sol', // Buscar pares con SOL
+                chainIds: 'solana'
+            }
+        });
         const pairs = response.data.pairs || [];
         console.log(`Total pares obtenidos: ${pairs.length}`);
 
         const solanaTokens = pairs
             .filter(pair => {
-                const marketCap = pair.fdv; // Fully Diluted Valuation
+                const isSolana = pair.chainId === 'solana';
+                const marketCap = pair.fdv;
                 const volume = pair.volume.h24;
-                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 10000;
+                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | Chain: ${pair.chainId} | MarketCap: ${marketCap} | Volumen: ${volume}`);
+                return isSolana && marketCap >= 1000000 && marketCap <= 100000000 && volume >= 10000;
             })
             .map(pair => pair.baseToken.address)
             .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index); // Eliminar duplicados
