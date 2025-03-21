@@ -34,36 +34,29 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: INITIAL_INVESTMENT / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0400123121077544e-7 // Último ciclo
+    lastPrice: 1.0421951663603157e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
-    console.log('Actualizando lista de tokens volátiles con CoinGecko...');
+    console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
-        let allTokens = [];
-        for (let page = 1; page <= 2; page++) {
-            const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
-                params: {
-                    vs_currency: 'usd',
-                    order: 'market_cap_desc',
-                    per_page: 250,
-                    page: page,
-                    sparkline: false
-                }
-            });
-            allTokens = allTokens.concat(response.data);
-        }
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/multi', {
+            params: {
+                chainIds: 'solana',
+                tokenAddresses: '' // Obtener todos los tokens de Solana
+            }
+        });
+        const pairs = response.data.pairs || [];
+        console.log(`Total pares obtenidos: ${pairs.length}`);
 
-        console.log(`Total tokens obtenidos: ${allTokens.length}`);
-        const solanaTokens = allTokens
-            .filter(token => {
-                const marketCap = token.market_cap;
-                const volume = token.total_volume;
-                const hasSolanaAddress = token.platforms && token.platforms['solana'];
-                return hasSolanaAddress && marketCap >= 1000000 && marketCap <= 100000000 && volume >= 50000; // Relajado a $50k
+        const solanaTokens = pairs
+            .filter(pair => {
+                const marketCap = pair.fdv; // Fully Diluted Valuation como proxy de market cap
+                const volume = pair.volume.h24;
+                return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 50000;
             })
-            .map(token => token.platforms['solana'])
-            .filter(address => address && address.length === 44);
+            .map(pair => pair.baseToken.address)
+            .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index); // Eliminar duplicados
 
         console.log(`Tokens de Solana filtrados: ${solanaTokens.length}`);
         if (solanaTokens.length > 0) {
@@ -75,7 +68,7 @@ async function updateVolatileTokens() {
             console.log('Lista rotada (fallback):', volatileTokens);
         }
     } catch (error) {
-        console.log('Error actualizando con CoinGecko:', error.message);
+        console.log('Error actualizando con DexScreener:', error.message);
         volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
         console.log('Lista rotada (fallback):', volatileTokens);
     }
