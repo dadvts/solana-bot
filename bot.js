@@ -14,25 +14,25 @@ const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient();
 const portfolio = {
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
-        buyPrice: 0.14 / 13391.45752205, // 1.0454425873321102e-5 SOL/ATLAS
-        amount: 13125, // ATLAS actuales
-        lastPrice: 1.0401584905660378e-5 // Última venta como referencia
+        buyPrice: 0.14 / 13391.45752205,
+        amount: 13125,
+        lastPrice: 1.0401584905660378e-5
     }
 };
-let tradingCapital = 0.0139; // Saldo real en billetera
+let tradingCapital = 0.0139;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.01;
-const FEE_RESERVE = 0.0025; // Para fees y cuentas
+const FEE_RESERVE = 0.0025;
 const INITIAL_INVESTMENT = 0.14;
 const TARGET_THRESHOLD = 0.3;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
 
 let volatileTokens = [
-    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
-    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // SAMO
-    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB', // GST
-    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'  // SLND
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx',
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
+    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
+    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'
 ];
 
 async function updateVolatileTokens() {
@@ -102,7 +102,7 @@ async function selectBestToken() {
     }
 
     if (!bestToken) {
-        console.log('⚠️ No se encontró token válido para comprar.');
+        console.log('No se encontró token válido para comprar.');
         return null;
     }
     console.log('Mejor token seleccionado:', bestToken.token.toBase58(), '| Cantidad:', bestToken.price);
@@ -130,7 +130,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
-        console.log(`✅ Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
+        console.log(`Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
         portfolio[tokenPubKey.toBase58()] = { 
             buyPrice: amountPerTrade / tokenAmount, 
             amount: tokenAmount, 
@@ -139,7 +139,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         tradingCapital -= amountPerTrade;
         console.log(`Capital restante tras compra: ${tradingCapital} SOL`);
     } catch (error) {
-        console.log('❌ Error en compra:', error.message);
+        console.log('Error en compra:', error.message);
     }
 }
 
@@ -166,37 +166,37 @@ async function sellToken(tokenPubKey) {
         await connection.confirmTransaction(txid);
         const solReceived = quote.outAmount / 1e9;
         const profit = solReceived - (amount * buyPrice);
-        console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
+        console.log(`Venta: ${txid} | Recibiste: ${solReceived} SOL`);
 
         const totalSol = tradingCapital + savedSol;
         if (totalSol >= TARGET_THRESHOLD) {
             const netProfit = profit;
             tradingCapital += (netProfit * 0.5);
             savedSol += (netProfit * 0.5);
-            console.log(`📈 Umbral de ${TARGET_THRESHOLD} SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
+            console.log(`Umbral de ${TARGET_THRESHOLD} SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
         } else {
             tradingCapital += solReceived;
-            console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+            console.log(`Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()]);
+        delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
-        console.log('❌ Error en venta:', error.message);
+        console.log('Error en venta:', error.message);
     }
 }
 
 async function tradingBot() {
     try {
-        console.log('🤖 Iniciando ciclo de trading...');
+        console.log('Iniciando ciclo de trading...');
         const realBalance = await getWalletBalance();
-        console.log(`📊 Saldo real: ${realBalance} SOL | Capital registrado: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+        console.log(`Saldo real: ${realBalance} SOL | Capital registrado: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         if (realBalance < tradingCapital) {
-            console.log('⚠️ Saldo real menor al registrado. Actualizando...');
+            console.log('Saldo real menor al registrado. Actualizando...');
             tradingCapital = realBalance;
         }
         console.log(`Portfolio actual: ${JSON.stringify(portfolio)}`);
 
         if (tradingCapital < MIN_TRADE_AMOUNT + FEE_RESERVE && Object.keys(portfolio).length === 0) {
-            console.log('🚫 Capital insuficiente para operar (incluyendo fees).');
+            console.log('Capital insuficiente para operar (incluyendo fees).');
             return;
         }
 
@@ -236,22 +236,22 @@ async function tradingBot() {
             }
         }
 
-        console.log('✔️ Ciclo de trading completado.');
+        console.log('Ciclo de trading completado.');
     } catch (error) {
-        console.error('❌ Error en el ciclo:', error.message);
+        console.error('Error en el ciclo:', error.message);
     }
 }
 
 function startBot() {
-    console.log('🚀 Bot starting...');
+    console.log('Bot starting...');
     updateVolatileTokens();
     tradingBot();
     setInterval(() => {
-        console.log('🔄 Nuevo ciclo de trading iniciando...');
+        console.log('Nuevo ciclo de trading iniciando...');
         tradingBot();
     }, CYCLE_INTERVAL);
     setInterval(() => {
-        console.log('🔄 Actualizando lista de tokens...');
+        console.log('Actualizando lista de tokens...');
         updateVolatileTokens();
     }, UPDATE_INTERVAL);
 }
