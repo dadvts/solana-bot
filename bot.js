@@ -12,16 +12,10 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
 const jupiterApi = createJupiterApiClient();
-const portfolio = {
-    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
-        buyPrice: 0.14 / 13391.45752205, // 1.0454425873321102e-5 SOL/ATLAS
-        amount: 13250, // ATLAS restantes
-        lastPrice: 1.038866753457791e-5 // Corregido a e-5
-    }
-};
-let tradingCapital = 0.0126; // SOL en billetera
+const portfolio = {}; // Vacío tras la venta
+let tradingCapital = 0.01397821; // Actualizado tras la venta
 let savedSol = 0;
-const MIN_TRADE_AMOUNT = 0.01; // Ajustado a capital disponible
+const MIN_TRADE_AMOUNT = 0.01; // Ajustado al capital
 const INITIAL_INVESTMENT = 0.14;
 const TARGET_THRESHOLD = 0.3;
 const CYCLE_INTERVAL = 600000;
@@ -54,7 +48,7 @@ async function updateVolatileTokens() {
                 const marketCap = pair.fdv;
                 const volume = pair.volume.h24;
                 console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | Chain: ${pair.chainId} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return isSolana && marketCap >= 50000 && marketCap <= 200000000 && volume >= 1000; // Filtros muy relajados
+                return isSolana && marketCap >= 10000 && marketCap <= 500000000 && volume >= 500; // Filtros más relajados
             })
             .map(pair => pair.baseToken.address)
             .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
@@ -88,7 +82,7 @@ async function selectBestToken() {
                 amount: Math.floor(tradingCapital * 1e9),
                 slippageBps: 50
             });
-            const tokenAmount = quote.outAmount / 1e6;
+            const tokenAmount = quote.outAmount / 1e6; // Normalizado a unidades de token
             const pricePerSol = tokenAmount / tradingCapital;
             console.log(`Token: ${tokenMint} | Precio por SOL: ${pricePerSol}`);
             if (pricePerSol > highestPricePerSol) {
@@ -131,9 +125,9 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         await connection.confirmTransaction(txid);
         console.log(`✅ Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
         portfolio[tokenPubKey.toBase58()] = { 
-            buyPrice: amountPerTrade / tokenAmount, 
+            buyPrice: amountPerTrade / tokenAmount, // SOL por token
             amount: tokenAmount, 
-            lastPrice: 0 
+            lastPrice: amountPerTrade / tokenAmount // Inicializamos con el precio de compra
         };
         tradingCapital -= amountPerTrade;
     } catch (error) {
@@ -204,7 +198,7 @@ async function tradingBot() {
                 outputMint: 'So11111111111111111111111111111111111111112',
                 amount: Math.floor(portfolio[token].amount * 1e6)
             });
-            const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount; // Normalizado a SOL/ATLAS
+            const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount; // SOL por token
             const { buyPrice, lastPrice } = portfolio[token];
             console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL | Precio anterior: ${lastPrice} SOL`);
 
