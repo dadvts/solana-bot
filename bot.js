@@ -16,8 +16,10 @@ const portfolio = {};
 let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.02;
-const CYCLE_INTERVAL = 600000; // 10 minutos para trading
-const UPDATE_INTERVAL = 720 * 60000; // 12 horas para actualizar tokens
+const INITIAL_INVESTMENT = 0.14; // Inversión inicial en ATLAS
+const TARGET_THRESHOLD = 0.3; // Umbral para empezar a ahorrar
+const CYCLE_INTERVAL = 600000; // 10 minutos
+const UPDATE_INTERVAL = 720 * 60000; // 12 horas
 
 // Lista inicial (fallback)
 let volatileTokens = [
@@ -30,32 +32,37 @@ let volatileTokens = [
 
 // Estado inicial con tu compra
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
-    buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
+    buyPrice: INITIAL_INVESTMENT / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0383472431663577e-7 // Último ciclo
+    lastPrice: 1.0390611161696702e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con CoinGecko...');
     try {
-        const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
-            params: {
-                vs_currency: 'usd',
-                order: 'market_cap_desc',
-                per_page: 250,
-                page: 1,
-                sparkline: false
-            }
-        });
-        const solanaTokens = response.data
+        let allTokens = [];
+        for (let page = 1; page <= 2; page++) { // Paginación para más resultados
+            const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
+                params: {
+                    vs_currency: 'usd',
+                    order: 'market_cap_desc',
+                    per_page: 250,
+                    page: page,
+                    sparkline: false
+                }
+            });
+            allTokens = allTokens.concat(response.data);
+        }
+
+        const solanaTokens = allTokens
             .filter(token => {
                 const marketCap = token.market_cap;
                 const volume = token.total_volume;
                 const hasSolanaAddress = token.platforms && token.platforms['solana'];
                 return hasSolanaAddress && marketCap >= 1000000 && marketCap <= 100000000 && volume >= 100000;
             })
-            .map(token => token.platforms['solana']) // Obtener mint address de Solana
-            .filter(address => address && address.length === 44); // Validar longitud
+            .map(token => token.platforms['solana'])
+            .filter(address => address && address.length === 44);
 
         if (solanaTokens.length > 0) {
             volatileTokens = solanaTokens.slice(0, 10);
@@ -162,8 +169,19 @@ async function sellToken(tokenPubKey) {
         const solReceived = quote.outAmount / 1e9;
         const profit = solReceived - (amount * buyPrice);
         console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
-        tradingCapital += solReceived;
-        console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL`);
+
+        const totalSol = tradingCapital + savedSol + solReceived;
+        if (totalSol >= TARGET_THRESHOLD) {
+            const netProfit = totalSol - INITIAL_INVESTMENT;
+            const reinvestAmount = INITIAL_INVESTMENT + (netProfit * 0.5);
+            const saveAmount = netProfit * 0.5;
+            tradingCapital = reinvestAmount;
+            savedSol = saveAmount;
+            console.log(`📈 Umbral de ${TARGET_THRESHOLD} SOL alcanzado. Reinversión: ${reinvestAmount} SOL | Guardado: ${saveAmount} SOL`);
+        } else {
+            tradingCapital += solReceived;
+            console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+        }
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
@@ -218,7 +236,7 @@ async function tradingBot() {
 
 function startBot() {
     console.log('🚀 Bot starting...');
-    updateVolatileTokens(); // Primera actualización
+    updateVolatileTokens();
     tradingBot();
     setInterval(() => {
         console.log('🔄 Nuevo ciclo de trading iniciando...');
@@ -227,7 +245,7 @@ function startBot() {
     setInterval(() => {
         console.log('🔄 Actualizando lista de tokens...');
         updateVolatileTokens();
-    }, UPDATE_INTERVAL); // Cada 12 horas
+    }, UPDATE_INTERVAL);
 }
 
 startBot();
