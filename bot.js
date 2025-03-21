@@ -1,81 +1,259 @@
-==> Running 'npm start'
-> solana-bot@1.0.0 start
-> node bot.js
-bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
-bs58 loaded: {
-  encode: [Function: encode],
-  decodeUnsafe: [Function: decodeUnsafe],
-  decode: [Function: decode]
+const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
+const bs58 = require('bs58');
+const { createJupiterApiClient } = require('@jup-ag/api');
+const axios = require('axios');
+
+console.log('bs58 loaded:', bs58);
+console.log('bs58.decode exists:', typeof bs58.decode);
+
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+const walletPubKey = keypair.publicKey;
+
+const jupiterApi = createJupiterApiClient();
+const portfolio = {
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
+        buyPrice: 0.14 / 13391.45752205, // 1.0454425873321102e-5 SOL/ATLAS
+        amount: 13125, // ATLAS actuales
+        lastPrice: 1.0401584905660378e-5 // Última venta como referencia
+    }
+};
+let tradingCapital = 0.0139; // Saldo real en billetera
+let savedSol = 0;
+const MIN_TRADE_AMOUNT = 0.01;
+const FEE_RESERVE = 0.0025; // Para fees y cuentas
+const INITIAL_INVESTMENT = 0.14;
+const TARGET_THRESHOLD = 0.3;
+const CYCLE_INTERVAL = 600000;
+const UPDATE_INTERVAL = 720 * 60000;
+
+let volatileTokens = [
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // SAMO
+    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB', // GST
+    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'  // SLND
+];
+
+async function updateVolatileTokens() {
+    console.log('Actualizando lista de tokens volátiles con DexScreener...');
+    try {
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
+            params: { q: 'sol', chainIds: 'solana' }
+        });
+        const pairs = response.data.pairs || [];
+        console.log(`Total pares obtenidos: ${pairs.length}`);
+
+        const solanaTokens = pairs
+            .filter(pair => {
+                const isSolana = pair.chainId === 'solana';
+                const marketCap = pair.fdv;
+                const volume = pair.volume.h24;
+                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | Chain: ${pair.chainId} | MarketCap: ${marketCap} | Volumen: ${volume}`);
+                return isSolana && marketCap >= 10000 && marketCap <= 50000000 && volume >= 1000;
+            })
+            .map(pair => pair.baseToken.address)
+            .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
+
+        console.log(`Tokens de Solana filtrados: ${solanaTokens.length}`);
+        if (solanaTokens.length > 0) {
+            volatileTokens = solanaTokens.slice(0, 10);
+            console.log('Lista actualizada:', volatileTokens);
+        } else {
+            console.log('No se encontraron tokens válidos. Usando lista previa.');
+            volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
+            console.log('Lista rotada (fallback):', volatileTokens);
+        }
+    } catch (error) {
+        console.log('Error actualizando con DexScreener:', error.message);
+        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
+        console.log('Lista rotada (fallback):', volatileTokens);
+    }
 }
-bs58.decode exists: function
-🚀 Bot starting...
-Actualizando lista de tokens volátiles con DexScreener...
-🤖 Iniciando ciclo de trading...
-📊 Capital: 0.01397821 SOL | Guardado: 0 SOL
-Analizando tokens volátiles...
-(node:91) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
-(Use `node --trace-deprecation ...` to show where the warning was created)
-Token: ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx | Precio por SOL: 9647097.500681417
-Token: 7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj | Precio por SOL: 824.6132373172245
-Token: AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB | Precio por SOL: 14167991.567232141
-Error con StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL: Response returned an error code
-Error con SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN: Response returned an error code
-Mejor token seleccionado: AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB
-Comprando AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB con 0.01397821 SOL
-Total pares obtenidos: 30
-Par: SOL | Address: factory/osmo1n3n75av8awcnw4jl62n3l48e6e4sxqmaf97w5ua6ddu4s475q5qq9udvx4/alloyed/allSOL | Chain: osmosis | MarketCap: 2718508 | Volumen: 96369.31
-Par: SOL | Address: 0x873301F2B4B83FeaFF04121B68eC9231B29Ce0df | Chain: pulsechain | MarketCap: 277341 | Volumen: 18898.45
-Par: SOL | Address: factory/osmo1n3n75av8awcnw4jl62n3l48e6e4sxqmaf97w5ua6ddu4s475q5qq9udvx4/alloyed/allSOL | Chain: osmosis | MarketCap: 2715808 | Volumen: 19755.32
-Par: SOL | Address: 0xd93f7E271cB87c23AaA73edC008A79646d1F9912 | Chain: polygon | MarketCap: 4479439 | Volumen: 52330.31
-Par: SOL | Address: 0x2bcC6D6CdBbDC0a4071e48bb3B969b06B3330c07 | Chain: arbitrum | MarketCap: 9154192 | Volumen: 45813.58
-Par: SOL | Address: 22.contract.portalbridge.near | Chain: near | MarketCap: 203451 | Volumen: 3964.78
-Par: SOL | Address: 0x2bcC6D6CdBbDC0a4071e48bb3B969b06B3330c07 | Chain: arbitrum | MarketCap: 9209198 | Volumen: 5808.75
-Par: SOL | Address: CZgCjLLrr62jkCzf9bFYD3n8dQbTtpQ9B5NDuXxVeGU4 | Chain: solana | MarketCap: 127829915475 | Volumen: 5.2
-Par: Sol | Address: 6fH5quaXK2kNLRqNiH1N3ZDb5X7uaitmW67HdYn9Az2m | Chain: solana | MarketCap: 127769915531 | Volumen: 127.72
-Par: SOL | Address: FaWYfgAo3HGksQyXrgiSkXzekwvdAJbqLrAFec3JLMwB | Chain: solana | MarketCap: 112956019096 | Volumen: 27.77
-Par: SOL | Address: 22.contract.portalbridge.near | Chain: near | MarketCap: 202562 | Volumen: 1799.74
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 139088671 | Volumen: 1092976.71
-Par: SOL | Address: 0x873301F2B4B83FeaFF04121B68eC9231B29Ce0df | Chain: pulsechain | MarketCap: 272270 | Volumen: 1188.68
-Par: SOL | Address: 0x873301F2B4B83FeaFF04121B68eC9231B29Ce0df | Chain: pulsechain | MarketCap: 268115 | Volumen: 308.13
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138274589 | Volumen: 983881.92
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138906737 | Volumen: 197605.84
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138949058 | Volumen: 139032.52
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138095876 | Volumen: 6051.64
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138890756 | Volumen: 7166.75
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138251337 | Volumen: 19021.22
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 139940581 | Volumen: 1268.81
-Par: SOL | Address: 0xfA54fF1a158B5189Ebba6ae130CEd6bbd3aEA76e | Chain: bsc | MarketCap: 1307544 | Volumen: 35012.91
-Par: SOL | Address: 0x44F7237df00E386af8e79B817D05ED9f6FE0f296 | Chain: fantom | MarketCap: 96555 | Volumen: 89.13
-Par: SOL | Address: 0x44F7237df00E386af8e79B817D05ED9f6FE0f296 | Chain: fantom | MarketCap: 96022 | Volumen: 196.19
-Par: SOL | Address: sol.token.a11bd.near | Chain: near | MarketCap: 76302 | Volumen: 606.39
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138090514 | Volumen: 13187.51
-Par: SOL | Address: 0xd93f7E271cB87c23AaA73edC008A79646d1F9912 | Chain: polygon | MarketCap: 4489043 | Volumen: 1086.74
-Par: SOL | Address: 0xd93f7E271cB87c23AaA73edC008A79646d1F9912 | Chain: polygon | MarketCap: 4697776 | Volumen: 543.52
-Par: SOL | Address: 0xd93f7E271cB87c23AaA73edC008A79646d1F9912 | Chain: polygon | MarketCap: 4470125 | Volumen: 3627.37
-Par: SOL | Address: 0x570A5D26f7765Ecb712C0924E4De545B89fD43dF | Chain: bsc | MarketCap: 138009145 | Volumen: 2635.38
-Tokens de Solana filtrados: 0
-No se encontraron tokens válidos de Solana. Usando lista previa.
-Lista rotada (fallback): [
-  '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
-  'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
-  'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL',
-  'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN',
-  'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'
-]
-❌ Error en compra: Simulation failed. 
-Message: Transaction simulation failed: Error processing Instruction 3: custom program error: 0x1. 
-Logs: 
-[
-  "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
-  "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [2]",
-  "Program log: Instruction: InitializeAccount3",
-  "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA consumed 3158 of 1383826 compute units",
-  "Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA success",
-  "Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL consumed 19315 of 1399700 compute units",
-  "Program ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL success",
-  "Program 11111111111111111111111111111111 invoke [1]",
-  "Transfer: insufficient lamports 11797562, need 13978210",
-  "Program 11111111111111111111111111111111 failed: custom program error: 0x1"
-]. 
-Catch the `SendTransactionError` and call `getLogs()` on it for full details.
-✔️ Ciclo de trading completado.
+
+async function getWalletBalance() {
+    const balance = await connection.getBalance(walletPubKey);
+    return balance / 1e9;
+}
+
+async function selectBestToken() {
+    console.log('Analizando tokens volátiles...');
+    let bestToken = null;
+    let highestPricePerSol = 0;
+
+    for (const tokenMint of volatileTokens) {
+        try {
+            const quote = await jupiterApi.quoteGet({
+                inputMint: 'So11111111111111111111111111111111111111112',
+                outputMint: tokenMint,
+                amount: Math.floor((tradingCapital - FEE_RESERVE) * 1e9),
+                slippageBps: 50
+            });
+            const tokenAmount = quote.outAmount / 1e6;
+            const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
+            console.log(`Token: ${tokenMint} | Precio por SOL: ${pricePerSol} | Cantidad esperada: ${tokenAmount}`);
+            if (pricePerSol > highestPricePerSol) {
+                highestPricePerSol = pricePerSol;
+                bestToken = { token: new PublicKey(tokenMint), price: tokenAmount };
+            }
+        } catch (error) {
+            console.log(`Error con ${tokenMint}:`, error.message);
+        }
+    }
+
+    if (!bestToken) {
+        console.log('⚠️ No se encontró token válido para comprar.');
+        return null;
+    }
+    console.log('Mejor token seleccionado:', bestToken.token.toBase58(), '| Cantidad:', bestToken.price);
+    return bestToken;
+}
+
+async function buyToken(tokenPubKey, amountPerTrade) {
+    console.log(`Comprando ${tokenPubKey.toBase58()} con ${amountPerTrade} SOL`);
+    try {
+        const quote = await jupiterApi.quoteGet({
+            inputMint: 'So11111111111111111111111111111111111111112',
+            outputMint: tokenPubKey.toBase58(),
+            amount: Math.floor(amountPerTrade * 1e9),
+            slippageBps: 50
+        });
+        const tokenAmount = quote.outAmount / 1e6;
+        const swap = await jupiterApi.swapPost({
+            swapRequest: {
+                quoteResponse: quote,
+                userPublicKey: walletPubKey.toBase58(),
+                wrapAndUnwrapSol: true
+            }
+        });
+        const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+        transaction.sign([keypair]);
+        const txid = await connection.sendRawTransaction(transaction.serialize());
+        await connection.confirmTransaction(txid);
+        console.log(`✅ Compra: ${txid} | Obtuviste: ${tokenAmount} ${tokenPubKey.toBase58()}`);
+        portfolio[tokenPubKey.toBase58()] = { 
+            buyPrice: amountPerTrade / tokenAmount, 
+            amount: tokenAmount, 
+            lastPrice: amountPerTrade / tokenAmount 
+        };
+        tradingCapital -= amountPerTrade;
+        console.log(`Capital restante tras compra: ${tradingCapital} SOL`);
+    } catch (error) {
+        console.log('❌ Error en compra:', error.message);
+    }
+}
+
+async function sellToken(tokenPubKey) {
+    const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
+    console.log(`Vendiendo ${tokenPubKey.toBase58()} (${amount} tokens)`);
+    try {
+        const quote = await jupiterApi.quoteGet({
+            inputMint: tokenPubKey.toBase58(),
+            outputMint: 'So11111111111111111111111111111111111111112',
+            amount: Math.floor(amount * 1e6),
+            slippageBps: 50
+        });
+        const swap = await jupiterApi.swapPost({
+            swapRequest: {
+                quoteResponse: quote,
+                userPublicKey: walletPubKey.toBase58(),
+                wrapAndUnwrapSol: true
+            }
+        });
+        const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+        transaction.sign([keypair]);
+        const txid = await connection.sendRawTransaction(transaction.serialize());
+        await connection.confirmTransaction(txid);
+        const solReceived = quote.outAmount / 1e9;
+        const profit = solReceived - (amount * buyPrice);
+        console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
+
+        const totalSol = tradingCapital + savedSol;
+        if (totalSol >= TARGET_THRESHOLD) {
+            const netProfit = profit;
+            tradingCapital += (netProfit * 0.5);
+            savedSol += (netProfit * 0.5);
+            console.log(`📈 Umbral de ${TARGET_THRESHOLD} SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
+        } else {
+            tradingCapital += solReceived;
+            console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+        }
+        delete portfolio[tokenPubKey.toBase58()]);
+    } catch (error) {
+        console.log('❌ Error en venta:', error.message);
+    }
+}
+
+async function tradingBot() {
+    try {
+        console.log('🤖 Iniciando ciclo de trading...');
+        const realBalance = await getWalletBalance();
+        console.log(`📊 Saldo real: ${realBalance} SOL | Capital registrado: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+        if (realBalance < tradingCapital) {
+            console.log('⚠️ Saldo real menor al registrado. Actualizando...');
+            tradingCapital = realBalance;
+        }
+        console.log(`Portfolio actual: ${JSON.stringify(portfolio)}`);
+
+        if (tradingCapital < MIN_TRADE_AMOUNT + FEE_RESERVE && Object.keys(portfolio).length === 0) {
+            console.log('🚫 Capital insuficiente para operar (incluyendo fees).');
+            return;
+        }
+
+        if (Object.keys(portfolio).length === 0 && tradingCapital >= MIN_TRADE_AMOUNT + FEE_RESERVE) {
+            const token = await selectBestToken();
+            if (!token) return;
+            const tradeAmount = tradingCapital - FEE_RESERVE;
+            await buyToken(token.token, tradeAmount);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        for (const token in portfolio) {
+            const quote = await jupiterApi.quoteGet({
+                inputMint: token,
+                outputMint: 'So11111111111111111111111111111111111111112',
+                amount: Math.floor(portfolio[token].amount * 1e6)
+            });
+            const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount;
+            const { buyPrice, lastPrice } = portfolio[token];
+            console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL | Precio anterior: ${lastPrice} SOL`);
+
+            const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
+
+            if (currentPrice <= buyPrice * 0.97) {
+                console.log(`Stop-loss activado: ${currentPrice} <= ${buyPrice * 0.97}`);
+                await sellToken(new PublicKey(token));
+            } else if (currentPrice >= buyPrice * 1.075) {
+                if (growthVsLast <= 0) {
+                    console.log(`Venta por ganancia estabilizada: ${currentPrice} >= ${buyPrice * 1.075}, crecimiento: ${(growthVsLast * 100).toFixed(2)}%`);
+                    await sellToken(new PublicKey(token));
+                } else {
+                    console.log(`Tendencia alcista detectada (${(growthVsLast * 100).toFixed(2)}% vs anterior). Esperando...`);
+                }
+            } else {
+                portfolio[token].lastPrice = currentPrice;
+                console.log(`Precio actualizado. Sin acción tomada.`);
+            }
+        }
+
+        console.log('✔️ Ciclo de trading completado.');
+    } catch (error) {
+        console.error('❌ Error en el ciclo:', error.message);
+    }
+}
+
+function startBot() {
+    console.log('🚀 Bot starting...');
+    updateVolatileTokens();
+    tradingBot();
+    setInterval(() => {
+        console.log('🔄 Nuevo ciclo de trading iniciando...');
+        tradingBot();
+    }, CYCLE_INTERVAL);
+    setInterval(() => {
+        console.log('🔄 Actualizando lista de tokens...');
+        updateVolatileTokens();
+    }, UPDATE_INTERVAL);
+}
+
+startBot();
