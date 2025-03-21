@@ -30,7 +30,7 @@ let volatileTokens = [
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 0 // Precio anterior, inicia en 0
+    lastPrice: 1.041362381730141e-7 // Actualizado con el último ciclo
 };
 
 async function updateVolatileTokens() {
@@ -132,7 +132,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         portfolio[tokenPubKey.toBase58()] = { 
             buyPrice: amountPerTrade / tokenAmount, 
             amount: tokenAmount, 
-            lastPrice: 0 // Inicializar lastPrice
+            lastPrice: 0 
         };
         tradingCapital -= amountPerTrade;
     } catch (error) {
@@ -170,7 +170,7 @@ async function sellToken(tokenPubKey) {
         console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
         tradingCapital += solReceived;
         console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL`);
-        delete portfolio[tokenPubKey.toBase58()];
+        delete portfolio[tokenPubKey.toBase58()]);
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
         if (error.getLogs) {
@@ -208,18 +208,18 @@ async function tradingBot() {
             const { buyPrice, lastPrice } = portfolio[token];
             console.log(`Token: ${token} | Precio actual: ${currentPrice} SOL | Precio compra: ${buyPrice} SOL | Precio anterior: ${lastPrice} SOL`);
 
-            const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity; // Evitar división por 0
+            const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
             if (currentPrice <= buyPrice * 0.97) { // Stop-loss -3%
                 await sellToken(new PublicKey(token));
-            } else if (currentPrice >= buyPrice * 1.10) { // Ganancia ≥10%
+            } else if (currentPrice >= buyPrice * 1.075) { // Ganancia ≥7.5%
                 if (growthVsLast <= 0) { // Crecimiento igual o menor que el anterior
                     await sellToken(new PublicKey(token));
                 } else {
                     console.log(`Tendencia alcista detectada (${(growthVsLast * 100).toFixed(2)}% vs anterior). Esperando...`);
                 }
             }
-            portfolio[token].lastPrice = currentPrice; // Actualizar precio anterior
+            portfolio[token].lastPrice = currentPrice;
         }
 
         console.log('✔️ Ciclo de trading completado.');
