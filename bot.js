@@ -15,22 +15,24 @@ const portfolio = {};
 let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.02;
-const CYCLE_INTERVAL = 600000; // 10 minutos en ms
+const CYCLE_INTERVAL = 300000; // 5 minutos en ms
 
-// Lista viva de tokens
+// Lista viva de tokens ampliada
 let volatileTokens = [
     'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL', // STEP
     'kinXdEcpDQeHPEuQnqmUgtYvK2sjDarPRCVCEnnExST', // KIN
     'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN', // SLND
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
-    'poLisWXnNRwC6oBu1vHciRGY3KG3J4Gnc57HbDQNDDKL' // POLIS
+    'poLisWXnNRwC6oBu1vHciRGY3KG3J4Gnc57HbDQNDDKL', // POLIS
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // SAMO
+    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB' // GST
 ];
 
 // Estado inicial con tu compra
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.041362381730141e-7 // Último ciclo
+    lastPrice: 1.0365500153470278e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
@@ -170,7 +172,7 @@ async function sellToken(tokenPubKey) {
         console.log(`✅ Venta: ${txid} | Recibiste: ${solReceived} SOL`);
         tradingCapital += solReceived;
         console.log(`📈 Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL`);
-        delete portfolio[tokenPubKey.toBase58()]; // Corregido: sin paréntesis extra
+        delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
         if (error.getLogs) {
@@ -210,9 +212,9 @@ async function tradingBot() {
 
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
-            if (currentPrice <= buyPrice * 0.97) { // Stop-loss -3%
+            if (currentPrice <= buyPrice * 0.98) { // Stop-loss -2%
                 await sellToken(new PublicKey(token));
-            } else if (currentPrice >= buyPrice * 1.075) { // Ganancia ≥7.5%
+            } else if (currentPrice >= buyPrice * 1.05) { // Ganancia ≥5%
                 if (growthVsLast <= 0) { // Crecimiento igual o menor que el anterior
                     await sellToken(new PublicKey(token));
                 } else {
