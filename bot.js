@@ -1,6 +1,7 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
+const axios = require('axios'); // Nueva dependencia para API calls
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.decode);
@@ -15,65 +16,58 @@ const portfolio = {};
 let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.02;
-const CYCLE_INTERVAL = 300000; // 5 minutos en ms
+const CYCLE_INTERVAL = 600000; // 10 minutos para trading
+const UPDATE_INTERVAL = 720 * 60000; // 12 horas para actualizar tokens
 
-// Lista viva de tokens ampliada
+// Lista inicial (fallback)
 let volatileTokens = [
-    'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL', // STEP
-    'kinXdEcpDQeHPEuQnqmUgtYvK2sjDarPRCVCEnnExST', // KIN
-    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN', // SLND
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
-    'poLisWXnNRwC6oBu1vHciRGY3KG3J4Gnc57HbDQNDDKL', // POLIS
     '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // SAMO
-    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB' // GST
+    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB', // GST
+    'StepApp-3KDXpB2SZMfxSX8j6Z82TR461uvLphxWPho5XRHfLGL', // STEP
+    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'  // SLND
 ];
 
 // Estado inicial con tu compra
 portfolio['ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'] = {
     buyPrice: 0.14 / 1339145.752205, // ~1.0454e-7 SOL/ATLAS
     amount: 1339145.752205,
-    lastPrice: 1.0365500153470278e-7 // Último ciclo
+    lastPrice: 1.0447681051119987e-7 // Último ciclo
 };
 
 async function updateVolatileTokens() {
-    console.log('Actualizando lista de tokens volátiles...');
-    const newTokens = [];
+    console.log('Actualizando lista de tokens volátiles con CoinGecko...');
     try {
-        const candidates = volatileTokens.slice(0, 3).concat(getRandomTokens(2));
-        for (const tokenMint of candidates) {
-            const quote = await jupiterApi.quoteGet({
-                inputMint: 'So11111111111111111111111111111111111111112',
-                outputMint: tokenMint,
-                amount: Math.floor(0.1 * 1e9),
-                slippageBps: 50
-            });
-            const tokenAmount = quote.outAmount / 1e6;
-            const pricePerSol = tokenAmount / 0.1;
-            const marketCapEstimate = pricePerSol * 40000000;
-            if (marketCapEstimate > 1000000 && marketCapEstimate < 100000000) {
-                newTokens.push(tokenMint);
+        const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets', {
+            params: {
+                vs_currency: 'usd',
+                order: 'market_cap_desc',
+                per_page: 250, // Máximo por página
+                page: 1,
+                sparkline: false,
+                platform: 'solana' // Filtrar por Solana
             }
-        }
-        if (newTokens.length > 0) {
-            volatileTokens = newTokens.concat(volatileTokens).slice(0, 10);
+        });
+        const tokens = response.data
+            .filter(token => {
+                const marketCap = token.market_cap;
+                const volume = token.total_volume;
+                return marketCap >= 1000000 && marketCap <= 100000000 && volume >= 100000;
+            })
+            .map(token => token.contract_address) // Mint address en Solana
+            .filter(address => address && address.length === 44); // Validar longitud de mint
+
+        if (tokens.length > 0) {
+            volatileTokens = tokens.slice(0, 10); // Limitar a 10 tokens
             console.log('Lista actualizada:', volatileTokens);
         } else {
-            console.log('No se encontraron nuevos tokens válidos.');
+            console.log('No se encontraron tokens válidos. Usando lista previa.');
         }
     } catch (error) {
-        console.log('Error actualizando tokens:', error.message);
-        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
-        console.log('Lista rotada:', volatileTokens);
+        console.log('Error actualizando con CoinGecko:', error.message);
+        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]); // Rotar como fallback
+        console.log('Lista rotada (fallback):', volatileTokens);
     }
-}
-
-function getRandomTokens(count) {
-    const knownTokens = [
-        '7xKXtzSsc1uPucxW9VpjeXCqiYxnmX2rcza7GW2aM5R', // RAY
-        'SRMuApVNdxXokk5GT7XD5cUUgXMBCoAz2LHeuAoKWRt', // SRM
-        'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE' // ORCA
-    ];
-    return knownTokens.sort(() => 0.5 - Math.random()).slice(0, count);
 }
 
 async function selectBestToken() {
@@ -139,10 +133,6 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         tradingCapital -= amountPerTrade;
     } catch (error) {
         console.log('❌ Error en compra:', error.message);
-        if (error.getLogs) {
-            const logs = await error.getLogs(connection);
-            console.log('Logs de error:', logs);
-        }
     }
 }
 
@@ -175,10 +165,6 @@ async function sellToken(tokenPubKey) {
         delete portfolio[tokenPubKey.toBase58()];
     } catch (error) {
         console.log('❌ Error en venta:', error.message);
-        if (error.getLogs) {
-            const logs = await error.getLogs(connection);
-            console.log('Logs de error:', logs);
-        }
     }
 }
 
@@ -190,8 +176,6 @@ async function tradingBot() {
             console.log('🚫 Capital insuficiente y sin tokens para vender.');
             return;
         }
-
-        await updateVolatileTokens();
 
         if (Object.keys(portfolio).length === 0 && tradingCapital >= MIN_TRADE_AMOUNT) {
             const token = await selectBestToken();
@@ -212,9 +196,9 @@ async function tradingBot() {
 
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
-            if (currentPrice <= buyPrice * 0.98) { // Stop-loss -2%
+            if (currentPrice <= buyPrice * 0.97) { // Stop-loss -3%
                 await sellToken(new PublicKey(token));
-            } else if (currentPrice >= buyPrice * 1.05) { // Ganancia ≥5%
+            } else if (currentPrice >= buyPrice * 1.075) { // Ganancia ≥7.5%
                 if (growthVsLast <= 0) { // Crecimiento igual o menor que el anterior
                     await sellToken(new PublicKey(token));
                 } else {
@@ -232,11 +216,16 @@ async function tradingBot() {
 
 function startBot() {
     console.log('🚀 Bot starting...');
+    updateVolatileTokens(); // Primera actualización
     tradingBot();
     setInterval(() => {
-        console.log('🔄 Nuevo ciclo iniciando...');
+        console.log('🔄 Nuevo ciclo de trading iniciando...');
         tradingBot();
     }, CYCLE_INTERVAL);
+    setInterval(() => {
+        console.log('🔄 Actualizando lista de tokens...');
+        updateVolatileTokens();
+    }, UPDATE_INTERVAL); // Cada 12 horas
 }
 
 startBot();
