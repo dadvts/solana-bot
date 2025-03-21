@@ -38,9 +38,7 @@ let volatileTokens = [
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search', {
-            params: { q: 'sol', chainIds: 'solana' }
-        });
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
         const pairs = response.data.pairs || [];
         console.log(`Total pares obtenidos: ${pairs.length}`);
 
@@ -49,8 +47,9 @@ async function updateVolatileTokens() {
                 const isSolana = pair.chainId === 'solana';
                 const marketCap = pair.fdv;
                 const volume = pair.volume.h24;
+                const isSolPair = pair.quoteToken.address === 'So11111111111111111111111111111111111111112';
                 console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | Chain: ${pair.chainId} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return isSolana && marketCap >= 10000 && marketCap <= 50000000 && volume >= 1000;
+                return isSolana && isSolPair && marketCap >= 10000 && marketCap <= 50000000 && volume >= 1000;
             })
             .map(pair => pair.baseToken.address)
             .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
@@ -89,7 +88,7 @@ async function selectBestToken() {
                 amount: Math.floor((tradingCapital - FEE_RESERVE) * 1e9),
                 slippageBps: 50
             });
-            const tokenAmount = quote.outAmount / 1e6;
+            const tokenAmount = quote.outAmount / 1e8;
             const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
             console.log(`Token: ${tokenMint} | Precio por SOL: ${pricePerSol} | Cantidad esperada: ${tokenAmount}`);
             if (pricePerSol > highestPricePerSol) {
@@ -118,7 +117,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             amount: Math.floor(amountPerTrade * 1e9),
             slippageBps: 50
         });
-        const tokenAmount = quote.outAmount / 1e6;
+        const tokenAmount = quote.outAmount / 1e8;
         const swap = await jupiterApi.swapPost({
             swapRequest: {
                 quoteResponse: quote,
@@ -150,7 +149,7 @@ async function sellToken(tokenPubKey) {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenPubKey.toBase58(),
             outputMint: 'So11111111111111111111111111111111111111112',
-            amount: Math.floor(amount * 1e6),
+            amount: Math.floor(amount * 1e8),
             slippageBps: 50
         });
         const swap = await jupiterApi.swapPost({
@@ -212,7 +211,7 @@ async function tradingBot() {
             const quote = await jupiterApi.quoteGet({
                 inputMint: token,
                 outputMint: 'So11111111111111111111111111111111111111112',
-                amount: Math.floor(portfolio[token].amount * 1e6)
+                amount: Math.floor(portfolio[token].amount * 1e8)
             });
             const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount;
             const { buyPrice, lastPrice } = portfolio[token];
