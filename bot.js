@@ -1,4 +1,5 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
+const { getMint } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
@@ -14,17 +15,21 @@ const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient();
 const portfolio = {
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
-        buyPrice: 0.14 / 13391.45752205,
-        amount: 13125,
-        lastPrice: 1.0401584905660378e-5
+        buyPrice: 0.14 / 13391.45752205, // ~0.000010454 SOL/ATLAS
+        amount: 12600, // Tu cantidad actual
+        lastPrice: 0.000010454425873321102
+    },
+    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB': {
+        buyPrice: 0.01274 / 180.612, // ~0.00007054 SOL/GST
+        amount: 180.612, // Tu cantidad actual
+        lastPrice: 0.00007054
     }
 };
-let tradingCapital = 0.0139;
+let tradingCapital = 0.0039; // Tu saldo actual en SOL
 let savedSol = 0;
-const MIN_TRADE_AMOUNT = 0.01;
-const FEE_RESERVE = 0.0025;
-const INITIAL_INVESTMENT = 0.14;
-const TARGET_THRESHOLD = 0.3;
+const MIN_TRADE_AMOUNT = 0.002; // Mínimo para operar con tu capital
+const FEE_RESERVE = 0.0005; // Suficiente para fees
+const CRITICAL_THRESHOLD = 0.001; // Umbral crítico
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
 
@@ -34,6 +39,16 @@ let volatileTokens = [
     'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
     'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'
 ];
+
+async function getTokenDecimals(mintPubKey) {
+    try {
+        const mint = await getMint(connection, new PublicKey(mintPubKey));
+        return mint.decimals;
+    } catch (error) {
+        console.log(`Error obteniendo decimales para ${mintPubKey}:`, error.message);
+        return 6; // Valor por defecto si falla
+    }
+}
 
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
@@ -48,7 +63,7 @@ async function updateVolatileTokens() {
                 const marketCap = pair.fdv;
                 const volume = pair.volume.h24;
                 const isSolPair = pair.quoteToken.address === 'So11111111111111111111111111111111111111112';
-                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | Chain: ${pair.chainId} | MarketCap: ${marketCap} | Volumen: ${volume}`);
+                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
                 return isSolana && isSolPair && marketCap >= 10000 && marketCap <= 50000000 && volume >= 1000;
             })
             .map(pair => pair.baseToken.address)
@@ -82,18 +97,19 @@ async function selectBestToken() {
 
     for (const tokenMint of volatileTokens) {
         try {
+            const decimals = await getTokenDecimals(tokenMint);
             const quote = await jupiterApi.quoteGet({
                 inputMint: 'So11111111111111111111111111111111111111112',
                 outputMint: tokenMint,
                 amount: Math.floor((tradingCapital - FEE_RESERVE) * 1e9),
                 slippageBps: 50
             });
-            const tokenAmount = quote.outAmount / 1e8;
+            const tokenAmount = quote.outAmount / (10 ** decimals);
             const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
-            console.log(`Token: ${tokenMint} | Precio por SOL: ${pricePerSol} | Cantidad esperada: ${tokenAmount}`);
+            console.log(`Token: ${tokenMint} | Precio por SOL: ${pricePerSol} | Cantidad esperada: ${tokenAmount} | Decimales: ${decimals}`);
             if (pricePerSol > highestPricePerSol) {
                 highestPricePerSol = pricePerSol;
-                bestToken = { token: new PublicKey(tokenMint), price: tokenAmount };
+                bestToken = { token: new PublicKey(tokenMint), price: tokenAmount, decimals };
             }
         } catch (error) {
             console.log(`Error con ${tokenMint}:`, error.message);
@@ -104,20 +120,21 @@ async function selectBestToken() {
         console.log('No se encontró token válido para comprar.');
         return null;
     }
-    console.log('Mejor token seleccionado:', bestToken.token.toBase58(), '| Cantidad:', bestToken.price);
+    console.log('Mejor token seleccionado:', bestToken.token.toBase58(), '| Cantidad:', bestToken.price, '| Decimales:', bestToken.decimals);
     return bestToken;
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
     console.log(`Comprando ${tokenPubKey.toBase58()} con ${amountPerTrade} SOL`);
     try {
+        const decimals = await getTokenDecimals(tokenPubKey);
         const quote = await jupiterApi.quoteGet({
             inputMint: 'So11111111111111111111111111111111111111112',
             outputMint: tokenPubKey.toBase58(),
             amount: Math.floor(amountPerTrade * 1e9),
             slippageBps: 50
         });
-        const tokenAmount = quote.outAmount / 1e8;
+        const tokenAmount = quote.outAmount / (10 ** decimals);
         const swap = await jupiterApi.swapPost({
             swapRequest: {
                 quoteResponse: quote,
@@ -133,7 +150,8 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         portfolio[tokenPubKey.toBase58()] = { 
             buyPrice: amountPerTrade / tokenAmount, 
             amount: tokenAmount, 
-            lastPrice: amountPerTrade / tokenAmount 
+            lastPrice: amountPerTrade / tokenAmount,
+            decimals
         };
         tradingCapital -= amountPerTrade;
         console.log(`Capital restante tras compra: ${tradingCapital} SOL`);
@@ -143,13 +161,13 @@ async function buyToken(tokenPubKey, amountPerTrade) {
 }
 
 async function sellToken(tokenPubKey) {
-    const { buyPrice, amount } = portfolio[tokenPubKey.toBase58()];
+    const { buyPrice, amount, lastPrice, decimals } = portfolio[tokenPubKey.toBase58()];
     console.log(`Vendiendo ${tokenPubKey.toBase58()} (${amount} tokens)`);
     try {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenPubKey.toBase58(),
             outputMint: 'So11111111111111111111111111111111111111112',
-            amount: Math.floor(amount * 1e8),
+            amount: Math.floor(amount * (10 ** decimals)), // Venta de cantidad entera
             slippageBps: 50
         });
         const swap = await jupiterApi.swapPost({
@@ -168,11 +186,11 @@ async function sellToken(tokenPubKey) {
         console.log(`Venta: ${txid} | Recibiste: ${solReceived} SOL`);
 
         const totalSol = tradingCapital + savedSol;
-        if (totalSol >= TARGET_THRESHOLD) {
+        if (totalSol >= 0.3) { // TARGET_THRESHOLD
             const netProfit = profit;
             tradingCapital += (netProfit * 0.5);
             savedSol += (netProfit * 0.5);
-            console.log(`Umbral de ${TARGET_THRESHOLD} SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
+            console.log(`Umbral de 0.3 SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
         } else {
             tradingCapital += solReceived;
             console.log(`Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
@@ -192,6 +210,15 @@ async function tradingBot() {
             console.log('Saldo real menor al registrado. Actualizando...');
             tradingCapital = realBalance;
         }
+
+        if (realBalance < CRITICAL_THRESHOLD && Object.keys(portfolio).length > 0) {
+            console.log('Capital crítico detectado. Vendiendo todo...');
+            for (const token in portfolio) {
+                await sellToken(new PublicKey(token));
+            }
+            return;
+        }
+
         console.log(`Portfolio actual: ${JSON.stringify(portfolio)}`);
 
         if (tradingCapital < MIN_TRADE_AMOUNT + FEE_RESERVE && Object.keys(portfolio).length === 0) {
@@ -208,10 +235,11 @@ async function tradingBot() {
         }
 
         for (const token in portfolio) {
+            const decimals = portfolio[token].decimals || await getTokenDecimals(token);
             const quote = await jupiterApi.quoteGet({
                 inputMint: token,
                 outputMint: 'So11111111111111111111111111111111111111112',
-                amount: Math.floor(portfolio[token].amount * 1e8)
+                amount: Math.floor(portfolio[token].amount * (10 ** decimals))
             });
             const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount;
             const { buyPrice, lastPrice } = portfolio[token];
