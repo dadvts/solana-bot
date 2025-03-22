@@ -15,21 +15,21 @@ const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient();
 const portfolio = {
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
-        buyPrice: 0.14 / 13391.45752205, // ~0.000010454 SOL/ATLAS
-        amount: 12600, // Tu cantidad actual
+        buyPrice: 0.14 / 13391.45752205,
+        amount: 12600,
         lastPrice: 0.000010454425873321102
     },
     'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB': {
-        buyPrice: 0.01274 / 180.612, // ~0.00007054 SOL/GST
-        amount: 180.612, // Tu cantidad actual
+        buyPrice: 0.01274 / 180.612,
+        amount: 180.612,
         lastPrice: 0.00007054
     }
 };
-let tradingCapital = 0.0039; // Tu saldo actual en SOL
+let tradingCapital = 0.0039;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT = 0.002; // Mínimo para operar con tu capital
-const FEE_RESERVE = 0.0005; // Suficiente para fees
-const CRITICAL_THRESHOLD = 0.001; // Umbral crítico
+const MIN_TRADE_AMOUNT = 0.002;
+const FEE_RESERVE = 0.0005;
+const CRITICAL_THRESHOLD = 0.001;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
 
@@ -46,7 +46,7 @@ async function getTokenDecimals(mintPubKey) {
         return mint.decimals;
     } catch (error) {
         console.log(`Error obteniendo decimales para ${mintPubKey}:`, error.message);
-        return 6; // Valor por defecto si falla
+        return 6;
     }
 }
 
@@ -167,7 +167,7 @@ async function sellToken(tokenPubKey) {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenPubKey.toBase58(),
             outputMint: 'So11111111111111111111111111111111111111112',
-            amount: Math.floor(amount * (10 ** decimals)), // Venta de cantidad entera
+            amount: Math.floor(amount * (10 ** decimals)),
             slippageBps: 50
         });
         const swap = await jupiterApi.swapPost({
@@ -186,7 +186,7 @@ async function sellToken(tokenPubKey) {
         console.log(`Venta: ${txid} | Recibiste: ${solReceived} SOL`);
 
         const totalSol = tradingCapital + savedSol;
-        if (totalSol >= 0.3) { // TARGET_THRESHOLD
+        if (totalSol >= 0.3) {
             const netProfit = profit;
             tradingCapital += (netProfit * 0.5);
             savedSol += (netProfit * 0.5);
@@ -211,7 +211,7 @@ async function tradingBot() {
             tradingCapital = realBalance;
         }
 
-        if (realBalance < CRITICAL_THRESHOLD && Object.keys(portfolio).length > 0) {
+        if (realBalance < 0.001 && Object.keys(portfolio).length > 0) {
             console.log('Capital crítico detectado. Vendiendo todo...');
             for (const token in portfolio) {
                 await sellToken(new PublicKey(token));
