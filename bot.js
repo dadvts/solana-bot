@@ -2,13 +2,14 @@ const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL }
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
-const axios = require('axios'); // Nueva dependencia
+const axios = require('axios');
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.decode);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
+console.log('PRIVATE_KEY:', PRIVATE_KEY, typeof PRIVATE_KEY);
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
