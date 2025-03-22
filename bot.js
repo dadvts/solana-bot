@@ -1,4 +1,3 @@
-
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
@@ -12,7 +11,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
-const jupiterApi = createJupiterApiClient();
+const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' }); // Especificamos explícitamente la URL
 const portfolio = {
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
         buyPrice: 0.14 / 13391.45752205,
@@ -88,7 +87,7 @@ async function selectBestToken() {
                 inputMint: 'So11111111111111111111111111111111111111112',
                 outputMint: tokenMint,
                 amount: Math.floor((tradingCapital - FEE_RESERVE) * LAMPORTS_PER_SOL),
-                slippageBps: 500 // Aumentado a 5%
+                slippageBps: 500
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
             const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
@@ -118,7 +117,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             inputMint: 'So11111111111111111111111111111111111111112',
             outputMint: tokenPubKey.toBase58(),
             amount: Math.floor(amountPerTrade * LAMPORTS_PER_SOL),
-            slippageBps: 500 // Aumentado a 5%
+            slippageBps: 500
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
         const swap = await jupiterApi.swapPost({
@@ -174,8 +173,9 @@ async function sellToken(tokenPubKey, retries = 3) {
                 inputMint: tokenMint,
                 outputMint: 'So11111111111111111111111111111111111111112',
                 amount: Math.floor(portfolio[tokenMint].amount * (10 ** decimals)),
-                slippageBps: 500 // Aumentado a 5%
+                slippageBps: 500
             });
+            console.log('Cotización obtenida:', JSON.stringify(quote, null, 2));
             console.log('Generando transacción de swap...');
             const swapResponse = await jupiterApi.swapPost({
                 swapRequest: {
@@ -210,9 +210,13 @@ async function sellToken(tokenPubKey, retries = 3) {
             await new Promise(resolve => setTimeout(resolve, 2000));
             return;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido. Error en venta:`, error.message, error.stack);
+            console.log(`Intento ${attempt} fallido. Error en venta:`, error.message);
+            console.log('Stack trace:', error.stack);
             if (error.response) {
-                console.log('Detalles del error de la API:', JSON.stringify(error.response.data, null, 2));
+                console.log('Código de estado HTTP:', error.response.status);
+                console.log('Datos de la respuesta:', JSON.stringify(error.response.data, null, 2));
+            } else {
+                console.log('No hay respuesta HTTP disponible. Error completo:', JSON.stringify(error, null, 2));
             }
             if (attempt < retries) {
                 console.log(`Reintentando en 5 segundos...`);
@@ -263,7 +267,7 @@ async function tradingBot() {
                 inputMint: token,
                 outputMint: 'So11111111111111111111111111111111111111112',
                 amount: Math.floor(portfolio[token].amount * (10 ** decimals)),
-                slippageBps: 500 // Aumentado a 5%
+                slippageBps: 500
             });
             const currentPrice = (quote.outAmount / LAMPORTS_PER_SOL) / portfolio[token].amount;
             const { buyPrice, lastPrice } = portfolio[token];
