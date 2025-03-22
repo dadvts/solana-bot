@@ -12,5 +12,17 @@
     "axios": "^1.8.4",
     "bs58": "^5.0.0",
     "node-fetch": "^2.7.0"
-  }
+  },
+  "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadvts/solana-bot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dadvts/solana-bot/issues"
+  },
+  "homepage": "https://github.com/dadvts/solana-bot#readme"
 }

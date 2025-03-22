@@ -2,6 +2,7 @@ const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL }
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
+const axios = require('axios'); // Nueva dependencia
 
 console.log('bs58 loaded:', bs58);
 console.log('bs58.decode exists:', typeof bs58.decode);
@@ -125,7 +126,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                 quoteResponse: quote,
                 userPublicKey: walletPubKey.toBase58(),
                 wrapAndUnwrapSol: true,
-                destinationWallet: walletPubKey.toBase58() // Añadido explícitamente
+                destinationWallet: walletPubKey.toBase58()
             }
         });
         const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
@@ -177,18 +178,22 @@ async function sellToken(tokenPubKey, retries = 3) {
                 slippageBps: 500
             });
             console.log('Cotización obtenida:', JSON.stringify(quote, null, 2));
-            console.log('Generando transacción de swap...');
-            const swapResponse = await jupiterApi.swapPost({
-                swapRequest: {
-                    quoteResponse: quote,
-                    userPublicKey: walletPubKey.toBase58(),
-                    wrapAndUnwrapSol: true,
-                    destinationWallet: walletPubKey.toBase58() // Añadido explícitamente
-                }
+
+            console.log('Generando transacción de swap manualmente con axios...');
+            const swapRequest = {
+                quoteResponse: quote,
+                userPublicKey: walletPubKey.toBase58(),
+                wrapAndUnwrapSol: true,
+                destinationWallet: walletPubKey.toBase58()
+            };
+            console.log('Solicitud enviada a swapPost:', JSON.stringify(swapRequest, null, 2));
+            const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
+                headers: { 'Content-Type': 'application/json' }
             });
-            console.log('Respuesta de swapPost:', JSON.stringify(swapResponse, null, 2));
+            console.log('Respuesta cruda de swapPost:', JSON.stringify(response.data, null, 2));
+
             console.log('Deserializando y firmando transacción...');
-            const transaction = VersionedTransaction.deserialize(Buffer.from(swapResponse.swapTransaction, 'base64'));
+            const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
             transaction.sign([keypair]);
             console.log('Enviando transacción...');
             const txid = await connection.sendRawTransaction(transaction.serialize());
