@@ -28,7 +28,7 @@ const portfolio = {
 let tradingCapital = 0.003949694;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.001;
-const FEE_RESERVE = 0.0003;
+const FEE_RESERVE = 0.0002; // Reducido aún más
 const CRITICAL_THRESHOLD = 0.0005;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
@@ -52,29 +52,41 @@ async function getTokenDecimals(mintPubKey) {
 }
 
 async function updateVolatileTokens() {
-    console.log('Actualizando lista de tokens volátiles con DexScreener...');
+    console.log('Actualizando lista de tokens volátiles con Jupiter API...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL');
-        const pairs = response.data.pairs || [];
-        console.log(`Total pares obtenidos: ${pairs.length}`);
+        const response = await axios.get('https://quote-api.jup.ag/v6/tokens');
+        const tokens = response.data;
+        console.log(`Total tokens obtenidos: ${tokens.length}`);
 
-        const solanaTokens = pairs
-            .filter(pair => {
-                const isSolana = pair.chainId === 'solana';
-                const marketCap = pair.fdv;
-                const volume = pair.volume.h24;
-                const isSolPair = pair.quoteToken.address === 'So11111111111111111111111111111111111111112';
-                const isValidMarketCap = marketCap >= 1000000 && marketCap <= 100000000;
-                const isValidVolume = volume >= 500000;
-                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return isSolana && isSolPair && isValidMarketCap && isValidVolume;
-            })
-            .map(pair => pair.baseToken.address)
-            .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
+        const solanaTokens = await Promise.all(tokens.map(async token => {
+            try {
+                const quote = await jupiterApi.quoteGet({
+                    inputMint: 'So11111111111111111111111111111111111111112',
+                    outputMint: token.address,
+                    amount: 1000000000, // 1 SOL
+                    slippageBps: 100
+                });
+                const priceInSol = quote.outAmount / (10 ** token.decimals) / 1;
+                const marketCap = priceInSol * (token.supply / (10 ** token.decimals)) * 100; // Aproximación en USD (suponiendo SOL ~ $100)
+                const volumeResponse = await axios.get(`https://api.jup.ag/v6/price?ids=${token.address}`);
+                const volume = volumeResponse.data.data[token.address]?.volume || 0;
 
-        console.log(`Tokens de Solana filtrados: ${solanaTokens.length}`);
-        if (solanaTokens.length > 0) {
-            volatileTokens = solanaTokens.slice(0, 10);
+                console.log(`Token: ${token.symbol} | Address: ${token.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
+                return { address: token.address, marketCap, volume };
+            } catch (error) {
+                console.log(`Error evaluando ${token.symbol}:`, error.message);
+                return null;
+            }
+        }));
+
+        const filteredTokens = solanaTokens
+            .filter(t => t && t.marketCap >= 1000000 && t.marketCap <= 100000000 && t.volume >= 500000)
+            .map(t => t.address)
+            .filter((address, index, self) => address && self.indexOf(address) === index);
+
+        console.log(`Tokens filtrados: ${filteredTokens.length}`);
+        if (filteredTokens.length > 0) {
+            volatileTokens = filteredTokens.slice(0, 10);
             console.log('Lista actualizada:', volatileTokens);
         } else {
             console.log('No se encontraron tokens válidos. Usando lista previa.');
@@ -82,7 +94,7 @@ async function updateVolatileTokens() {
             console.log('Lista rotada (fallback):', volatileTokens);
         }
     } catch (error) {
-        console.log('Error actualizando con DexScreener:', error.message);
+        console.log('Error actualizando con Jupiter:', error.message);
         volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
         console.log('Lista rotada (fallback):', volatileTokens);
     }
@@ -159,7 +171,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         tradingCapital -= amountPerTrade;
         console.log(`Capital restante tras compra: ${tradingCapital} SOL`);
     } catch (error) {
-        console.log('Error en compra:', error.message, error.response ? error.response.data : '');
+        console.log('Error en compra:', error.message, error.response ? JSON.stringify(error.response.data) : '');
     }
 }
 
@@ -206,7 +218,12 @@ async function sellToken(tokenPubKey) {
         delete portfolio[tokenPubKey.toBase58()];
         await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
-        console.log('Error en venta:', error.message, error.response ? error.response.data : '');
+        console.log('Error en venta:', error.message, error.response ? JSON.stringify(error.response.data) : '');
+        if (error.message.includes('429')) {
+            console.log('Límite de tasa alcanzado. Reintentando en 5 segundos...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            return await sellToken(tokenPubKey); // Reintento
+        }
     }
 }
 
