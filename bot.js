@@ -11,7 +11,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 
-const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' }); // Especificamos explícitamente la URL
+const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const portfolio = {
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
         buyPrice: 0.14 / 13391.45752205,
@@ -124,7 +124,8 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             swapRequest: {
                 quoteResponse: quote,
                 userPublicKey: walletPubKey.toBase58(),
-                wrapAndUnwrapSol: true
+                wrapAndUnwrapSol: true,
+                destinationWallet: walletPubKey.toBase58() // Añadido explícitamente
             }
         });
         const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
@@ -181,7 +182,8 @@ async function sellToken(tokenPubKey, retries = 3) {
                 swapRequest: {
                     quoteResponse: quote,
                     userPublicKey: walletPubKey.toBase58(),
-                    wrapAndUnwrapSol: true
+                    wrapAndUnwrapSol: true,
+                    destinationWallet: walletPubKey.toBase58() // Añadido explícitamente
                 }
             });
             console.log('Respuesta de swapPost:', JSON.stringify(swapResponse, null, 2));
