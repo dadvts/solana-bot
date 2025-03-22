@@ -28,7 +28,7 @@ const portfolio = {
 let tradingCapital = 0.003949694;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.001;
-const FEE_RESERVE = 0.0003; // Reducido para asegurar suficiente SOL
+const FEE_RESERVE = 0.0003;
 const CRITICAL_THRESHOLD = 0.0005;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
@@ -105,7 +105,7 @@ async function selectBestToken() {
                 inputMint: 'So11111111111111111111111111111111111111112',
                 outputMint: tokenMint,
                 amount: Math.floor((tradingCapital - FEE_RESERVE) * 1e9),
-                slippageBps: 100 // Aumentado para mayor tolerancia
+                slippageBps: 100
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
             const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
@@ -203,8 +203,8 @@ async function sellToken(tokenPubKey) {
             tradingCapital += solReceived;
             console.log(`Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()]);
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Retraso para evitar límites de tasa
+        delete portfolio[tokenPubKey.toBase58()];
+        await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
         console.log('Error en venta:', error.message, error.response ? error.response.data : '');
     }
