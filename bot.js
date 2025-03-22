@@ -1,7 +1,4 @@
 
-
-
-
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
@@ -91,7 +88,7 @@ async function selectBestToken() {
                 inputMint: 'So11111111111111111111111111111111111111112',
                 outputMint: tokenMint,
                 amount: Math.floor((tradingCapital - FEE_RESERVE) * LAMPORTS_PER_SOL),
-                slippageBps: 200
+                slippageBps: 500 // Aumentado a 5%
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
             const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
@@ -121,7 +118,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             inputMint: 'So11111111111111111111111111111111111111112',
             outputMint: tokenPubKey.toBase58(),
             amount: Math.floor(amountPerTrade * LAMPORTS_PER_SOL),
-            slippageBps: 200
+            slippageBps: 500 // Aumentado a 5%
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
         const swap = await jupiterApi.swapPost({
@@ -154,7 +151,6 @@ async function sellToken(tokenPubKey, retries = 3) {
     const { buyPrice, amount, lastPrice, decimals } = portfolio[tokenMint];
     console.log(`Vendiendo ${tokenMint} (${amount} tokens)`);
 
-    // Verificar saldo real
     const realBalance = await getTokenBalance(tokenMint);
     if (realBalance < amount) {
         console.log(`Saldo real (${realBalance}) menor que el registrado (${amount}). Actualizando...`);
@@ -178,18 +174,19 @@ async function sellToken(tokenPubKey, retries = 3) {
                 inputMint: tokenMint,
                 outputMint: 'So11111111111111111111111111111111111111112',
                 amount: Math.floor(portfolio[tokenMint].amount * (10 ** decimals)),
-                slippageBps: 200
+                slippageBps: 500 // Aumentado a 5%
             });
             console.log('Generando transacción de swap...');
-            const swap = await jupiterApi.swapPost({
+            const swapResponse = await jupiterApi.swapPost({
                 swapRequest: {
                     quoteResponse: quote,
                     userPublicKey: walletPubKey.toBase58(),
                     wrapAndUnwrapSol: true
                 }
             });
+            console.log('Respuesta de swapPost:', JSON.stringify(swapResponse, null, 2));
             console.log('Deserializando y firmando transacción...');
-            const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+            const transaction = VersionedTransaction.deserialize(Buffer.from(swapResponse.swapTransaction, 'base64'));
             transaction.sign([keypair]);
             console.log('Enviando transacción...');
             const txid = await connection.sendRawTransaction(transaction.serialize());
@@ -214,6 +211,9 @@ async function sellToken(tokenPubKey, retries = 3) {
             return;
         } catch (error) {
             console.log(`Intento ${attempt} fallido. Error en venta:`, error.message, error.stack);
+            if (error.response) {
+                console.log('Detalles del error de la API:', JSON.stringify(error.response.data, null, 2));
+            }
             if (attempt < retries) {
                 console.log(`Reintentando en 5 segundos...`);
                 await new Promise(resolve => setTimeout(resolve, 5000));
@@ -263,7 +263,7 @@ async function tradingBot() {
                 inputMint: token,
                 outputMint: 'So11111111111111111111111111111111111111112',
                 amount: Math.floor(portfolio[token].amount * (10 ** decimals)),
-                slippageBps: 200
+                slippageBps: 500 // Aumentado a 5%
             });
             const currentPrice = (quote.outAmount / LAMPORTS_PER_SOL) / portfolio[token].amount;
             const { buyPrice, lastPrice } = portfolio[token];
