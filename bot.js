@@ -25,19 +25,20 @@ const portfolio = {
         lastPrice: 0.00007054
     }
 };
-let tradingCapital = 0.0039;
+let tradingCapital = 0.003949694; // Ajustado a tu saldo real
 let savedSol = 0;
-const MIN_TRADE_AMOUNT = 0.002;
+const MIN_TRADE_AMOUNT = 0.001; // Reducido para operar con poco SOL
 const FEE_RESERVE = 0.0005;
-const CRITICAL_THRESHOLD = 0.001;
+const CRITICAL_THRESHOLD = 0.0005; // Reducido para evitar ventas prematuras
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
 
 let volatileTokens = [
-    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx',
-    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
-    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
-    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
+    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB', // GST
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // SAMO
+    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN',  // SLND
+    'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So'   // mSOL
 ];
 
 async function getTokenDecimals(mintPubKey) {
@@ -51,38 +52,9 @@ async function getTokenDecimals(mintPubKey) {
 }
 
 async function updateVolatileTokens() {
-    console.log('Actualizando lista de tokens volátiles con DexScreener...');
-    try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
-        const pairs = response.data.pairs || [];
-        console.log(`Total pares obtenidos: ${pairs.length}`);
-
-        const solanaTokens = pairs
-            .filter(pair => {
-                const isSolana = pair.chainId === 'solana';
-                const marketCap = pair.fdv;
-                const volume = pair.volume.h24;
-                const isSolPair = pair.quoteToken.address === 'So11111111111111111111111111111111111111112';
-                console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return isSolana && isSolPair && marketCap >= 10000 && marketCap <= 50000000 && volume >= 1000;
-            })
-            .map(pair => pair.baseToken.address)
-            .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
-
-        console.log(`Tokens de Solana filtrados: ${solanaTokens.length}`);
-        if (solanaTokens.length > 0) {
-            volatileTokens = solanaTokens.slice(0, 10);
-            console.log('Lista actualizada:', volatileTokens);
-        } else {
-            console.log('No se encontraron tokens válidos. Usando lista previa.');
-            volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
-            console.log('Lista rotada (fallback):', volatileTokens);
-        }
-    } catch (error) {
-        console.log('Error actualizando con DexScreener:', error.message);
-        volatileTokens = volatileTokens.slice(1).concat(volatileTokens[0]);
-        console.log('Lista rotada (fallback):', volatileTokens);
-    }
+    console.log('Manteniendo lista predefinida de tokens volátiles...');
+    // Por ahora, usamos la lista estática para evitar problemas con DexScreener
+    console.log('Lista actual:', volatileTokens);
 }
 
 async function getWalletBalance() {
@@ -211,7 +183,7 @@ async function tradingBot() {
             tradingCapital = realBalance;
         }
 
-        if (realBalance < 0.001 && Object.keys(portfolio).length > 0) {
+        if (realBalance < CRITICAL_THRESHOLD && Object.keys(portfolio).length > 0) {
             console.log('Capital crítico detectado. Vendiendo todo...');
             for (const token in portfolio) {
                 await sellToken(new PublicKey(token));
@@ -247,12 +219,12 @@ async function tradingBot() {
 
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
-            if (currentPrice <= buyPrice * 0.97) {
-                console.log(`Stop-loss activado: ${currentPrice} <= ${buyPrice * 0.97}`);
+            if (currentPrice <= buyPrice * 0.99) { // Ajustado temporalmente para forzar venta
+                console.log(`Stop-loss activado: ${currentPrice} <= ${buyPrice * 0.99}`);
                 await sellToken(new PublicKey(token));
-            } else if (currentPrice >= buyPrice * 1.075) {
+            } else if (currentPrice >= buyPrice * 1.05) { // Ajustado temporalmente
                 if (growthVsLast <= 0) {
-                    console.log(`Venta por ganancia estabilizada: ${currentPrice} >= ${buyPrice * 1.075}, crecimiento: ${(growthVsLast * 100).toFixed(2)}%`);
+                    console.log(`Venta por ganancia estabilizada: ${currentPrice} >= ${buyPrice * 1.05}, crecimiento: ${(growthVsLast * 100).toFixed(2)}%`);
                     await sellToken(new PublicKey(token));
                 } else {
                     console.log(`Tendencia alcista detectada (${(growthVsLast * 100).toFixed(2)}% vs anterior). Esperando...`);
