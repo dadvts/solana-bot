@@ -28,7 +28,7 @@ const portfolio = {
 let tradingCapital = 0.003949694;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.001;
-const FEE_RESERVE = 0.0002; // Reducido aún más
+const FEE_RESERVE = 0.0002;
 const CRITICAL_THRESHOLD = 0.0005;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
@@ -54,27 +54,24 @@ async function getTokenDecimals(mintPubKey) {
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con Jupiter API...');
     try {
-        const response = await axios.get('https://quote-api.jup.ag/v6/tokens');
-        const tokens = response.data;
+        const response = await axios.get('https://token.jup.ag/strict');
+        const tokens = response.data.slice(0, 100); // Limitar a 100 tokens
         console.log(`Total tokens obtenidos: ${tokens.length}`);
 
         const solanaTokens = await Promise.all(tokens.map(async token => {
             try {
-                const quote = await jupiterApi.quoteGet({
-                    inputMint: 'So11111111111111111111111111111111111111112',
-                    outputMint: token.address,
-                    amount: 1000000000, // 1 SOL
-                    slippageBps: 100
-                });
-                const priceInSol = quote.outAmount / (10 ** token.decimals) / 1;
-                const marketCap = priceInSol * (token.supply / (10 ** token.decimals)) * 100; // Aproximación en USD (suponiendo SOL ~ $100)
-                const volumeResponse = await axios.get(`https://api.jup.ag/v6/price?ids=${token.address}`);
-                const volume = volumeResponse.data.data[token.address]?.volume || 0;
+                const priceResponse = await axios.get(`https://price.jup.ag/v6/price?ids=${token.address}`);
+                const priceData = priceResponse.data.data[token.address];
+                if (!priceData) return null;
+
+                const priceInUsd = priceData.price;
+                const marketCap = priceInUsd * (token.supply / (10 ** token.decimals));
+                const volume = priceData.volume;
 
                 console.log(`Token: ${token.symbol} | Address: ${token.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
                 return { address: token.address, marketCap, volume };
             } catch (error) {
-                console.log(`Error evaluando ${token.symbol}:`, error.message);
+                console.log(`Error evaluando ${token.symbol || token.address}:`, error.message);
                 return null;
             }
         }));
@@ -171,58 +168,62 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         tradingCapital -= amountPerTrade;
         console.log(`Capital restante tras compra: ${tradingCapital} SOL`);
     } catch (error) {
-        console.log('Error en compra:', error.message, error.response ? JSON.stringify(error.response.data) : '');
+        console.log('Error en compra:', error.message, error.response ? JSON.stringify(error.response.data) : error.stack);
     }
 }
 
-async function sellToken(tokenPubKey) {
+async function sellToken(tokenPubKey, retries = 3) {
     const { buyPrice, amount, lastPrice, decimals } = portfolio[tokenPubKey.toBase58()];
     console.log(`Vendiendo ${tokenPubKey.toBase58()} (${amount} tokens)`);
-    try {
-        const realBalance = await getWalletBalance();
-        if (realBalance < FEE_RESERVE) {
-            console.log('Saldo insuficiente para cubrir fees. Abortando venta.');
-            return;
-        }
-        const quote = await jupiterApi.quoteGet({
-            inputMint: tokenPubKey.toBase58(),
-            outputMint: 'So11111111111111111111111111111111111111112',
-            amount: Math.floor(amount * (10 ** decimals)),
-            slippageBps: 100
-        });
-        const swap = await jupiterApi.swapPost({
-            swapRequest: {
-                quoteResponse: quote,
-                userPublicKey: walletPubKey.toBase58(),
-                wrapAndUnwrapSol: true
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const realBalance = await getWalletBalance();
+            if (realBalance < FEE_RESERVE) {
+                console.log('Saldo insuficiente para cubrir fees. Abortando venta.');
+                return;
             }
-        });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
-        transaction.sign([keypair]);
-        const txid = await connection.sendRawTransaction(transaction.serialize());
-        await connection.confirmTransaction(txid);
-        const solReceived = quote.outAmount / 1e9;
-        const profit = solReceived - (amount * buyPrice);
-        console.log(`Venta: ${txid} | Recibiste: ${solReceived} SOL`);
+            const quote = await jupiterApi.quoteGet({
+                inputMint: tokenPubKey.toBase58(),
+                outputMint: 'So11111111111111111111111111111111111111112',
+                amount: Math.floor(amount * (10 ** decimals)),
+                slippageBps: 100
+            });
+            const swap = await jupiterApi.swapPost({
+                swapRequest: {
+                    quoteResponse: quote,
+                    userPublicKey: walletPubKey.toBase58(),
+                    wrapAndUnwrapSol: true
+                }
+            });
+            const transaction = VersionedTransaction.deserialize(Buffer.from(swap.swapTransaction, 'base64'));
+            transaction.sign([keypair]);
+            const txid = await connection.sendRawTransaction(transaction.serialize());
+            await connection.confirmTransaction(txid);
+            const solReceived = quote.outAmount / 1e9;
+            const profit = solReceived - (amount * buyPrice);
+            console.log(`Venta: ${txid} | Recibiste: ${solReceived} SOL`);
 
-        const totalSol = tradingCapital + savedSol;
-        if (totalSol >= 0.3) {
-            const netProfit = profit;
-            tradingCapital += (netProfit * 0.5);
-            savedSol += (netProfit * 0.5);
-            console.log(`Umbral de 0.3 SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
-        } else {
-            tradingCapital += solReceived;
-            console.log(`Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
-        }
-        delete portfolio[tokenPubKey.toBase58()];
-        await new Promise(resolve => setTimeout(resolve, 2000));
-    } catch (error) {
-        console.log('Error en venta:', error.message, error.response ? JSON.stringify(error.response.data) : '');
-        if (error.message.includes('429')) {
-            console.log('Límite de tasa alcanzado. Reintentando en 5 segundos...');
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            return await sellToken(tokenPubKey); // Reintento
+            const totalSol = tradingCapital + savedSol;
+            if (totalSol >= 0.3) {
+                const netProfit = profit;
+                tradingCapital += (netProfit * 0.5);
+                savedSol += (netProfit * 0.5);
+                console.log(`Umbral de 0.3 SOL alcanzado. Reinversión: ${netProfit * 0.5} SOL | Guardado: ${netProfit * 0.5} SOL`);
+            } else {
+                tradingCapital += solReceived;
+                console.log(`Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+            }
+            delete portfolio[tokenPubKey.toBase58()];
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return;
+        } catch (error) {
+            console.log(`Intento ${attempt} fallido. Error en venta:`, error.message, error.response ? JSON.stringify(error.response.data) : error.stack);
+            if (attempt < retries) {
+                console.log(`Reintentando en 5 segundos...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } else {
+                console.log('Todos los intentos fallaron. Abortando venta.');
+            }
         }
     }
 }
@@ -292,7 +293,7 @@ async function tradingBot() {
 
         console.log('Ciclo de trading completado.');
     } catch (error) {
-        console.error('Error en el ciclo:', error.message);
+        console.error('Error en el ciclo:', error.message, error.stack);
     }
 }
 
