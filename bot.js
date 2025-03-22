@@ -28,7 +28,7 @@ const portfolio = {
 let tradingCapital = 0.003949694;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.001;
-const FEE_RESERVE = 0.0005;
+const FEE_RESERVE = 0.0003; // Reducido para asegurar suficiente SOL
 const CRITICAL_THRESHOLD = 0.0005;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
@@ -54,7 +54,7 @@ async function getTokenDecimals(mintPubKey) {
 async function updateVolatileTokens() {
     console.log('Actualizando lista de tokens volátiles con DexScreener...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL');
         const pairs = response.data.pairs || [];
         console.log(`Total pares obtenidos: ${pairs.length}`);
 
@@ -64,8 +64,10 @@ async function updateVolatileTokens() {
                 const marketCap = pair.fdv;
                 const volume = pair.volume.h24;
                 const isSolPair = pair.quoteToken.address === 'So11111111111111111111111111111111111111112';
+                const isValidMarketCap = marketCap >= 1000000 && marketCap <= 100000000;
+                const isValidVolume = volume >= 500000;
                 console.log(`Par: ${pair.baseToken.symbol} | Address: ${pair.baseToken.address} | MarketCap: ${marketCap} | Volumen: ${volume}`);
-                return isSolana && isSolPair && marketCap >= 1000000 && marketCap <= 100000000 && volume >= 500000;
+                return isSolana && isSolPair && isValidMarketCap && isValidVolume;
             })
             .map(pair => pair.baseToken.address)
             .filter((address, index, self) => address && address.length === 44 && self.indexOf(address) === index);
@@ -103,7 +105,7 @@ async function selectBestToken() {
                 inputMint: 'So11111111111111111111111111111111111111112',
                 outputMint: tokenMint,
                 amount: Math.floor((tradingCapital - FEE_RESERVE) * 1e9),
-                slippageBps: 50
+                slippageBps: 100 // Aumentado para mayor tolerancia
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
             const pricePerSol = tokenAmount / (tradingCapital - FEE_RESERVE);
@@ -133,7 +135,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             inputMint: 'So11111111111111111111111111111111111111112',
             outputMint: tokenPubKey.toBase58(),
             amount: Math.floor(amountPerTrade * 1e9),
-            slippageBps: 50
+            slippageBps: 100
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
         const swap = await jupiterApi.swapPost({
@@ -157,7 +159,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         tradingCapital -= amountPerTrade;
         console.log(`Capital restante tras compra: ${tradingCapital} SOL`);
     } catch (error) {
-        console.log('Error en compra:', error.message);
+        console.log('Error en compra:', error.message, error.response ? error.response.data : '');
     }
 }
 
@@ -174,7 +176,7 @@ async function sellToken(tokenPubKey) {
             inputMint: tokenPubKey.toBase58(),
             outputMint: 'So11111111111111111111111111111111111111112',
             amount: Math.floor(amount * (10 ** decimals)),
-            slippageBps: 50
+            slippageBps: 100
         });
         const swap = await jupiterApi.swapPost({
             swapRequest: {
@@ -201,7 +203,8 @@ async function sellToken(tokenPubKey) {
             tradingCapital += solReceived;
             console.log(`Ganancia: ${profit} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
         }
-        delete portfolio[tokenPubKey.toBase58()];
+        delete portfolio[tokenPubKey.toBase58()]);
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Retraso para evitar límites de tasa
     } catch (error) {
         console.log('Error en venta:', error.message, error.response ? error.response.data : '');
     }
@@ -245,7 +248,8 @@ async function tradingBot() {
             const quote = await jupiterApi.quoteGet({
                 inputMint: token,
                 outputMint: 'So11111111111111111111111111111111111111112',
-                amount: Math.floor(portfolio[token].amount * (10 ** decimals))
+                amount: Math.floor(portfolio[token].amount * (10 ** decimals)),
+                slippageBps: 100
             });
             const currentPrice = (quote.outAmount / 1e9) / portfolio[token].amount;
             const { buyPrice, lastPrice } = portfolio[token];
