@@ -23,7 +23,7 @@ let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
         buyPrice: 0.013383732267443119,
         amount: 9.680922,
-        lastPrice: 0.013373060954318193,
+        lastPrice: 0.013405661774777236,
         decimals: 6
     }
 };
@@ -58,19 +58,20 @@ async function getWalletBalance() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=solana');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const dexTokens = dexResponse.data.pairs
-            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 100 && 
-                !['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'].includes(pair.quoteToken.address)) // Excluir USDC y USDT
+            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 1000 && 
+                !['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', 
+                  'So11111111111111111111111111111111111111112'].includes(pair.baseToken.address))
             .sort((a, b) => b.volume.h24 - a.volume.h24)
-            .map(pair => ({ address: pair.quoteToken.address, symbol: pair.quoteToken.symbol }));
+            .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
         console.log('DexTokens filtrados:', dexTokens);
 
         const volatileWithHype = [];
-        for (const token of dexTokens.slice(0, 5)) { // Limitar a 5 para evitar 429
+        for (const token of dexTokens.slice(0, 5)) {
             const xPosts = await searchXPosts(token.symbol);
             if (xPosts.length > 5) {
                 volatileWithHype.push(token.address);
