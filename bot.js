@@ -19,14 +19,13 @@ const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 1800000;
 const REINVEST_THRESHOLD_USDT = 100;
-const MAX_MARKET_CAP = 1000000;
-const RECENT_DAYS = 30;
+const MAX_MARKET_CAP = 10000000; // Aumentado a $10M
 
 let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
         buyPrice: 1.74,
         amount: 9.680922,
-        lastPrice: 1.7450203606639945,
+        lastPrice: 1.7472150896371235,
         decimals: 6
     }
 };
@@ -68,13 +67,11 @@ async function updateVolatileTokens() {
         const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=solana');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
-        const recentThreshold = Date.now() - (RECENT_DAYS * 24 * 60 * 60 * 1000);
         const dexTokens = dexResponse.data.pairs
             .filter(pair => pair.chainId === 'solana' && 
                 pair.quoteToken.address === USDT_MINT && 
                 pair.volume.h24 > 5000 && 
-                pair.fdv < MAX_MARKET_CAP && 
-                pair.pairCreatedAt > recentThreshold)
+                pair.fdv < MAX_MARKET_CAP)
             .sort((a, b) => b.volume.h24 - a.volume.h24)
             .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
