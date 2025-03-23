@@ -1,7 +1,7 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
-const { createJupiterApiClient } = require('@jup-ag/api'); // Corregido de '@j-up/ag/api'
+const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
@@ -62,14 +62,15 @@ async function updateVolatileTokens() {
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const dexTokens = dexResponse.data.pairs
-            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 100)
+            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 100 && 
+                !['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'].includes(pair.quoteToken.address)) // Excluir USDC y USDT
             .sort((a, b) => b.volume.h24 - a.volume.h24)
-            .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
+            .map(pair => ({ address: pair.quoteToken.address, symbol: pair.quoteToken.symbol }));
 
         console.log('DexTokens filtrados:', dexTokens);
 
         const volatileWithHype = [];
-        for (const token of dexTokens.slice(0, 20)) {
+        for (const token of dexTokens.slice(0, 5)) { // Limitar a 5 para evitar 429
             const xPosts = await searchXPosts(token.symbol);
             if (xPosts.length > 5) {
                 volatileWithHype.push(token.address);
@@ -93,13 +94,13 @@ async function searchXPosts(symbol) {
     console.log('X_API_TOKEN:', process.env.X_API_TOKEN ? 'Configurado' : 'No configurado');
     try {
         const query = `${symbol} crypto OR token -inurl:(login OR signup)`;
-        const posts = await axios.get(`https://api.x.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=50`, {
+        const posts = await axios.get(`https://api.twitter.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=50`, {
             headers: { 'Authorization': `Bearer ${process.env.X_API_TOKEN}` }
         });
         console.log(`Posts encontrados para ${symbol}: ${posts.data.data?.length || 0}`);
         return posts.data.data || [];
     } catch (error) {
-        console.log(`Error buscando ${symbol} en X: ${error.message}`);
+        console.log(`Error buscando ${symbol} en X: ${error.response?.status || error.message}`);
         return [];
     }
 }
