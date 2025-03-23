@@ -18,12 +18,14 @@ const CRITICAL_THRESHOLD = 0.0001;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 1800000;
 const REINVEST_THRESHOLD = 1;
+const MAX_MARKET_CAP = 1000000; // $1M
+const RECENT_DAYS = 30;
 
 let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
         buyPrice: 0.013383732267443119,
         amount: 9.680922,
-        lastPrice: 0.013411393770138834,
+        lastPrice: 0.013395944621803584,
         decimals: 6
     }
 };
@@ -58,14 +60,18 @@ async function getWalletBalance() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=solana');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
+        const recentThreshold = Date.now() - (RECENT_DAYS * 24 * 60 * 60 * 1000);
         const dexTokens = dexResponse.data.pairs
-            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 1000 && 
-                !['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'].includes(pair.quoteToken.address))
+            .filter(pair => pair.chainId === 'solana' && 
+                pair.volume.h24 > 5000 && 
+                pair.fdv < MAX_MARKET_CAP && 
+                pair.pairCreatedAt > recentThreshold && 
+                pair.quoteToken.address === 'So11111111111111111111111111111111111111112')
             .sort((a, b) => b.volume.h24 - a.volume.h24)
-            .map(pair => ({ address: pair.quoteToken.address, symbol: pair.quoteToken.symbol }));
+            .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
         console.log('DexTokens filtrados:', dexTokens);
 
@@ -86,7 +92,7 @@ async function updateVolatileTokens() {
         console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
         console.log('Error actualizando tokens:', error.message);
-        volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCIkk59S5iCNLY3QrkX6R'];
+        volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'];
     }
 }
 
