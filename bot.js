@@ -19,13 +19,14 @@ const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 1800000;
 const REINVEST_THRESHOLD_USDT = 100;
-const MAX_MARKET_CAP = 10000000; // Aumentado a $10M
+const MAX_MARKET_CAP = 10000000;
+const MIN_VOLUME = 1000; // Reducido de 5000 a 1000
 
 let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
         buyPrice: 1.74,
         amount: 9.680922,
-        lastPrice: 1.7472150896371235,
+        lastPrice: 1.7461368865486158,
         decimals: 6
     }
 };
@@ -64,13 +65,13 @@ async function getWalletBalanceUsdt() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=solana');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const dexTokens = dexResponse.data.pairs
             .filter(pair => pair.chainId === 'solana' && 
                 pair.quoteToken.address === USDT_MINT && 
-                pair.volume.h24 > 5000 && 
+                pair.volume.h24 > MIN_VOLUME && 
                 pair.fdv < MAX_MARKET_CAP)
             .sort((a, b) => b.volume.h24 - a.volume.h24)
             .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
