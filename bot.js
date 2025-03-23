@@ -1,7 +1,7 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
-const { createJupiterApiClient } = require('@jup-ag/api');
+const { createJupiterApiClient } = require('@j-up/ag/api');
 const axios = require('axios');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
@@ -23,7 +23,7 @@ let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
         buyPrice: 0.013383732267443119,
         amount: 9.680922,
-        lastPrice: 0.013383732267443119,
+        lastPrice: 0.013373060954318193,
         decimals: 6
     }
 };
@@ -58,11 +58,11 @@ async function getWalletBalance() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const dexTokens = dexResponse.data.pairs
-            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 1000 && (pair.priceChange.h24 || 0) > 1)
+            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 100)
             .sort((a, b) => b.volume.h24 - a.volume.h24)
             .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
