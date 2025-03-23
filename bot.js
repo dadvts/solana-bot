@@ -24,9 +24,9 @@ const RECENT_DAYS = 30;
 
 let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
-        buyPrice: 1.74, // Convertido de 0.013383732 SOL/RAY * 130 USD/SOL
+        buyPrice: 1.74,
         amount: 9.680922,
-        lastPrice: 1.74025996697422,
+        lastPrice: 1.7450203606639945,
         decimals: 6
     }
 };
@@ -65,12 +65,13 @@ async function getWalletBalanceUsdt() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=solana');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const recentThreshold = Date.now() - (RECENT_DAYS * 24 * 60 * 60 * 1000);
         const dexTokens = dexResponse.data.pairs
             .filter(pair => pair.chainId === 'solana' && 
+                pair.quoteToken.address === USDT_MINT && 
                 pair.volume.h24 > 5000 && 
                 pair.fdv < MAX_MARKET_CAP && 
                 pair.pairCreatedAt > recentThreshold)
