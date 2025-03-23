@@ -13,13 +13,20 @@ const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag'
 let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.0001;
-const FEE_RESERVE = 0.0025; // Ajustado para cubrir ATA
+const FEE_RESERVE = 0.0025;
 const CRITICAL_THRESHOLD = 0.0001;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 720 * 60000;
 const REINVEST_THRESHOLD = 1;
 
-let portfolio = {}; // Vacío tras la venta
+let portfolio = {
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
+        buyPrice: 0.000010125718206681775,
+        amount: 13749.91503399,
+        lastPrice: 0.000010125718206681775,
+        decimals: 8
+    }
+};
 let volatileTokens = [
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx',
     'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
@@ -31,7 +38,7 @@ let volatileTokens = [
     '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',
     'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So'
 ];
-let lastSoldToken = null;
+let lastSoldToken = 'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'; // Inicializado con ATLAS
 
 async function getTokenDecimals(mintPubKey) {
     try {
@@ -233,7 +240,7 @@ async function tradingBot() {
         const growth = currentPrice / buyPrice;
         const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
-        if (growth <= 0.99) { // Volvemos a -1% ahora que hay saldo
+        if (growth <= 0.99) {
             console.log(`Stop-loss: ${currentPrice} <= ${buyPrice * 0.99}`);
             await sellToken(new PublicKey(token));
         } else if (growth >= 1.075 && growthVsLast <= 0) {
@@ -246,6 +253,7 @@ async function tradingBot() {
             portfolio[token].lastPrice = currentPrice;
         }
     }
+    console.log('Ciclo completado. Esperando próximo ciclo en 10 minutos...');
 }
 
 async function startBot() {
