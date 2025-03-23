@@ -5,7 +5,7 @@ const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-const PRIVATE_KEY = process.env.PRIVATE_KEY; // Asegúrate de configurarlo en Render
+const PRIVATE_KEY = process.env.PRIVATE_KEY; // Configurado en Render
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
@@ -16,19 +16,12 @@ const MIN_TRADE_AMOUNT = 0.0001;
 const FEE_RESERVE = 0.0025;
 const CRITICAL_THRESHOLD = 0.0001;
 const CYCLE_INTERVAL = 600000; // 10 min
-const UPDATE_INTERVAL = 3600000; // 1 hora para lista viva
+const UPDATE_INTERVAL = 1800000; // 30 min
 const REINVEST_THRESHOLD = 1;
 
-let portfolio = {
-    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
-        buyPrice: 0.000010125718206681775,
-        amount: 13749.91503399,
-        lastPrice: 0.000010125718206681775,
-        decimals: 8
-    }
-};
+let portfolio = {}; // Vacío tras vender ATLAS manualmente
 let volatileTokens = [];
-let lastSoldToken = 'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx';
+let lastSoldToken = null; // Reseteado tras venta
 
 async function getTokenDecimals(mintPubKey) {
     try {
@@ -58,34 +51,44 @@ async function getWalletBalance() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        // Paso 1: Obtener tokens de DexScreener
         const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL');
+        console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         const dexTokens = dexResponse.data.pairs
-            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 100000 && pair.priceChange.h24 > 50)
+            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 50000 && pair.priceChange.h24 > 20)
+            .sort((a, b) => b.volume.h24 - a.volume.h24)
             .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
-        // Paso 2: Refinar con hype social desde X
+        console.log('DexTokens filtrados:', dexTokens);
+
         const volatileWithHype = [];
-        for (const token of dexTokens.slice(0, 20)) { // Limitar a 20 para evitar sobrecarga
-            const xPosts = await searchXPosts(token.symbol); // Usar herramienta de Grok
-            if (xPosts.length > 10) { // Más de 10 menciones recientes
+        for (const token of dexTokens.slice(0, 20)) {
+            const xPosts = await searchXPosts(token.symbol);
+            if (xPosts.length > 5) {
                 volatileWithHype.push(token.address);
             }
         }
-        
+        console.log('Tokens con hype:', volatileWithHype);
+
         volatileTokens = volatileWithHype.length > 0 ? volatileWithHype : dexTokens.map(t => t.address).slice(0, 10);
+        if (volatileTokens.length === 0) {
+            console.log('No hay tokens viables, usando lista de respaldo manual');
+            volatileTokens = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v']; // USDC como fallback
+        }
         console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
         console.log('Error actualizando tokens:', error.message);
+        volatileTokens = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'];
     }
 }
 
 async function searchXPosts(symbol) {
+    console.log('X_API_TOKEN:', process.env.X_API_TOKEN ? 'Configurado' : 'No configurado');
     try {
-        const query = `${symbol} crypto OR token site:x.com -inurl:(login OR signup)`; // Ejemplo simple
+        const query = `${symbol} crypto OR token -inurl:(login OR signup)`;
         const posts = await axios.get(`https://api.x.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=50`, {
-            headers: { 'Authorization': `Bearer ${process.env.X_API_TOKEN}` } // Necesitas un token de X
+            headers: { 'Authorization': `Bearer ${process.env.X_API_TOKEN}` }
         });
+        console.log(`Posts encontrados para ${symbol}: ${posts.data.data?.length || 0}`);
         return posts.data.data || [];
     } catch (error) {
         console.log(`Error buscando ${symbol} en X: ${error.message}`);
