@@ -11,22 +11,22 @@ const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
-let tradingCapitalUsdt = 0; // USDT
+let tradingCapitalUsdt = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_USDT = 0.1; // USDT
-const FEE_RESERVE_SOL = 0.005; // SOL para fees
+const MIN_TRADE_AMOUNT_USDT = 0.1;
+const FEE_RESERVE_SOL = 0.005;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 600000;
 const UPDATE_INTERVAL = 1800000;
 const REINVEST_THRESHOLD_USDT = 100;
-const MAX_MARKET_CAP = 1000000; // $1M
+const MAX_MARKET_CAP = 1000000;
 const RECENT_DAYS = 30;
 
 let portfolio = {
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
-        buyPrice: 0.013383732267443119, // En SOL, mantener por ahora
+        buyPrice: 1.74, // Convertido de 0.013383732 SOL/RAY * 130 USD/SOL
         amount: 9.680922,
-        lastPrice: 0.013389945606420546,
+        lastPrice: 1.74025996697422,
         decimals: 6
     }
 };
@@ -65,7 +65,7 @@ async function getWalletBalanceUsdt() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=solana');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const recentThreshold = Date.now() - (RECENT_DAYS * 24 * 60 * 60 * 1000);
@@ -73,8 +73,7 @@ async function updateVolatileTokens() {
             .filter(pair => pair.chainId === 'solana' && 
                 pair.volume.h24 > 5000 && 
                 pair.fdv < MAX_MARKET_CAP && 
-                pair.pairCreatedAt > recentThreshold && 
-                pair.quoteToken.address === USDT_MINT)
+                pair.pairCreatedAt > recentThreshold)
             .sort((a, b) => b.volume.h24 - a.volume.h24)
             .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
@@ -128,7 +127,7 @@ async function selectBestToken() {
             const quote = await jupiterApi.quoteGet({
                 inputMint: USDT_MINT,
                 outputMint: tokenMint,
-                amount: Math.floor(availableCapital * (10 ** 6)), // USDT decimals = 6
+                amount: Math.floor(availableCapital * (10 ** 6)),
                 slippageBps: 500
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
@@ -177,7 +176,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         await connection.confirmTransaction(txid);
 
         portfolio[tokenPubKey.toBase58()] = {
-            buyPrice: tradeAmount / tokenAmount, // Precio en USDT/token
+            buyPrice: tradeAmount / tokenAmount,
             amount: tokenAmount,
             lastPrice: tradeAmount / tokenAmount,
             decimals
@@ -238,7 +237,7 @@ async function sellToken(tokenPubKey) {
             const profit = usdtReceived - (amount * buyPrice);
             const reinvest = profit * 0.5;
             tradingCapitalUsdt += reinvest;
-            savedSol += (usdtReceived - reinvest) / 130; // Convertir a SOL aproximado
+            savedSol += (usdtReceived - reinvest) / 130;
             console.log(`Reinversión: ${reinvest} USDT | Guardado: ${savedSol} SOL`);
         }
         return usdtReceived;
@@ -280,7 +279,7 @@ async function tradingBot() {
             amount: Math.floor(portfolio[token].amount * (10 ** decimals)),
             slippageBps: 500
         });
-        const currentPrice = (quote.outAmount / (10 ** 6)) / portfolio[token].amount; // USDT/token
+        const currentPrice = (quote.outAmount / (10 ** 6)) / portfolio[token].amount;
         const { buyPrice, lastPrice } = portfolio[token];
         console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice}`);
 
