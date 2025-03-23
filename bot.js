@@ -5,7 +5,7 @@ const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-const PRIVATE_KEY = process.env.PRIVATE_KEY; // Configurado en Render
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
@@ -13,15 +13,15 @@ const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag'
 let tradingCapital = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.0001;
-const FEE_RESERVE = 0.0025;
+const FEE_RESERVE = 0.005; // Aumentado para cubrir ATA
 const CRITICAL_THRESHOLD = 0.0001;
-const CYCLE_INTERVAL = 600000; // 10 min
-const UPDATE_INTERVAL = 1800000; // 30 min
+const CYCLE_INTERVAL = 600000;
+const UPDATE_INTERVAL = 1800000;
 const REINVEST_THRESHOLD = 1;
 
-let portfolio = {}; // Vacío tras vender ATLAS manualmente
+let portfolio = {};
 let volatileTokens = [];
-let lastSoldToken = null; // Reseteado tras venta
+let lastSoldToken = null;
 
 async function getTokenDecimals(mintPubKey) {
     try {
@@ -53,8 +53,9 @@ async function updateVolatileTokens() {
     try {
         const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
+        console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5)); // Depurar primeros 5
         const dexTokens = dexResponse.data.pairs
-            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 50000 && pair.priceChange.h24 > 20)
+            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 10000 && pair.priceChange.h24 > 5)
             .sort((a, b) => b.volume.h24 - a.volume.h24)
             .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
 
@@ -72,12 +73,12 @@ async function updateVolatileTokens() {
         volatileTokens = volatileWithHype.length > 0 ? volatileWithHype : dexTokens.map(t => t.address).slice(0, 10);
         if (volatileTokens.length === 0) {
             console.log('No hay tokens viables, usando lista de respaldo manual');
-            volatileTokens = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v']; // USDC como fallback
+            volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R']; // RAY como fallback
         }
         console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
         console.log('Error actualizando tokens:', error.message);
-        volatileTokens = ['EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'];
+        volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'];
     }
 }
 
@@ -129,7 +130,7 @@ async function selectBestToken() {
 async function buyToken(tokenPubKey, amountPerTrade) {
     try {
         const liquidBalance = await getWalletBalance();
-        const tradeAmount = Math.min(amountPerTrade, liquidBalance - FEE_RESERVE);
+        const tradeAmount = Math.min(amountPerTrade * 0.95, liquidBalance - FEE_RESERVE); // 95% para margen
         if (tradeAmount < MIN_TRADE_AMOUNT) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
