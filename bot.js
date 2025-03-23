@@ -10,16 +10,23 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 
-let tradingCapital = 0.1447;
+let tradingCapital = 0; // Se ajustará al saldo real
 let savedSol = 0;
-const MIN_TRADE_AMOUNT = 0.001;
-const FEE_RESERVE = 0.006;
-const CRITICAL_THRESHOLD = 0.0005;
+const MIN_TRADE_AMOUNT = 0.0001; // Reducido para operar con poco SOL
+const FEE_RESERVE = 0.0005; // Reducido pero suficiente
+const CRITICAL_THRESHOLD = 0.0001;
 const CYCLE_INTERVAL = 600000; // 10 minutos
 const UPDATE_INTERVAL = 720 * 60000; // 12 horas
 const REINVEST_THRESHOLD = 1;
 
-let portfolio = {};
+let portfolio = {
+    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx': {
+        buyPrice: 0.000010166, // Precio de compra original
+        amount: 14012.46,      // Saldo reportado
+        lastPrice: 0.000010166,
+        decimals: 8
+    }
+};
 let volatileTokens = [
     'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx', // ATLAS
     'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB', // GST
@@ -88,6 +95,7 @@ async function selectBestToken() {
         }
     }
     if (bestToken) console.log(`Mejor token seleccionado: ${bestToken.token.toBase58()}`);
+    else console.log('No se encontró un token viable para comprar');
     return bestToken;
 }
 
@@ -196,17 +204,23 @@ async function tradingBot() {
     console.log('Ciclo de trading...');
     const realBalance = await getWalletBalance();
     console.log(`Saldo real: ${realBalance} SOL | Capital: ${tradingCapital} SOL | Guardado: ${savedSol} SOL`);
+    tradingCapital = realBalance;
 
-    if (realBalance < tradingCapital) tradingCapital = realBalance;
     if (realBalance < CRITICAL_THRESHOLD && Object.keys(portfolio).length > 0) {
         console.log('Umbral crítico: vendiendo todo...');
         for (const token in portfolio) await sellToken(new PublicKey(token));
         return;
     }
 
-    if (Object.keys(portfolio).length === 0 && tradingCapital >= MIN_TRADE_AMOUNT + FEE_RESERVE) {
-        const bestToken = await selectBestToken();
-        if (bestToken) await buyToken(bestToken.token, tradingCapital - FEE_RESERVE);
+    if (Object.keys(portfolio).length === 0) {
+        if (tradingCapital >= MIN_TRADE_AMOUNT + FEE_RESERVE) {
+            console.log('Intentando comprar un nuevo token...');
+            const bestToken = await selectBestToken();
+            if (bestToken) await buyToken(bestToken.token, tradingCapital - FEE_RESERVE);
+            else console.log('No hay tokens disponibles para comprar');
+        } else {
+            console.log(`Capital insuficiente para comprar: ${tradingCapital} SOL`);
+        }
     }
 
     for (const token in portfolio) {
@@ -239,10 +253,11 @@ async function tradingBot() {
     }
 }
 
-function startBot() {
+async function startBot() {
+    tradingCapital = await getWalletBalance();
     console.log('Bot iniciado | Capital inicial:', tradingCapital, 'SOL');
     updateVolatileTokens();
-    tradingBot();
+    await tradingBot();
     setInterval(tradingBot, CYCLE_INTERVAL);
     setInterval(updateVolatileTokens, UPDATE_INTERVAL);
 }
