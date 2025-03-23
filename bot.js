@@ -5,7 +5,7 @@ const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const PRIVATE_KEY = process.env.PRIVATE_KEY; // Asegúrate de configurarlo en Render
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
@@ -15,8 +15,8 @@ let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.0001;
 const FEE_RESERVE = 0.0025;
 const CRITICAL_THRESHOLD = 0.0001;
-const CYCLE_INTERVAL = 600000;
-const UPDATE_INTERVAL = 720 * 60000;
+const CYCLE_INTERVAL = 600000; // 10 min
+const UPDATE_INTERVAL = 3600000; // 1 hora para lista viva
 const REINVEST_THRESHOLD = 1;
 
 let portfolio = {
@@ -27,18 +27,8 @@ let portfolio = {
         decimals: 8
     }
 };
-let volatileTokens = [
-    'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx',
-    'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB',
-    '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
-    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj',
-    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN',
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-    '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',
-    'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So'
-];
-let lastSoldToken = 'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx'; // Inicializado con ATLAS
+let volatileTokens = [];
+let lastSoldToken = 'ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx';
 
 async function getTokenDecimals(mintPubKey) {
     try {
@@ -67,7 +57,40 @@ async function getWalletBalance() {
 
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
-    console.log('Lista actual:', volatileTokens);
+    try {
+        // Paso 1: Obtener tokens de DexScreener
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL');
+        const dexTokens = dexResponse.data.pairs
+            .filter(pair => pair.chainId === 'solana' && pair.volume.h24 > 100000 && pair.priceChange.h24 > 50)
+            .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
+
+        // Paso 2: Refinar con hype social desde X
+        const volatileWithHype = [];
+        for (const token of dexTokens.slice(0, 20)) { // Limitar a 20 para evitar sobrecarga
+            const xPosts = await searchXPosts(token.symbol); // Usar herramienta de Grok
+            if (xPosts.length > 10) { // Más de 10 menciones recientes
+                volatileWithHype.push(token.address);
+            }
+        }
+        
+        volatileTokens = volatileWithHype.length > 0 ? volatileWithHype : dexTokens.map(t => t.address).slice(0, 10);
+        console.log('Lista actualizada:', volatileTokens);
+    } catch (error) {
+        console.log('Error actualizando tokens:', error.message);
+    }
+}
+
+async function searchXPosts(symbol) {
+    try {
+        const query = `${symbol} crypto OR token site:x.com -inurl:(login OR signup)`; // Ejemplo simple
+        const posts = await axios.get(`https://api.x.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=50`, {
+            headers: { 'Authorization': `Bearer ${process.env.X_API_TOKEN}` } // Necesitas un token de X
+        });
+        return posts.data.data || [];
+    } catch (error) {
+        console.log(`Error buscando ${symbol} en X: ${error.message}`);
+        return [];
+    }
 }
 
 async function selectBestToken() {
@@ -138,7 +161,6 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Capital: ${tradingCapital} SOL`);
     } catch (error) {
         console.log(`Error en compra de ${tokenPubKey.toBase58()}: ${error.message}`);
-        if (error.response) console.log('Respuesta:', JSON.stringify(error.response.data, null, 2));
     }
 }
 
@@ -197,7 +219,6 @@ async function sellToken(tokenPubKey) {
         return solReceived;
     } catch (error) {
         console.log(`Error vendiendo ${tokenMint}: ${error.message}`);
-        if (error.response) console.log('Respuesta:', JSON.stringify(error.response.data, null, 2));
         return 0;
     }
 }
@@ -259,7 +280,7 @@ async function tradingBot() {
 async function startBot() {
     tradingCapital = await getWalletBalance();
     console.log('Bot iniciado | Capital inicial:', tradingCapital, 'SOL');
-    updateVolatileTokens();
+    await updateVolatileTokens();
     await tradingBot();
     setInterval(tradingBot, CYCLE_INTERVAL);
     setInterval(updateVolatileTokens, UPDATE_INTERVAL);
