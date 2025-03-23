@@ -10,14 +10,14 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 
-let tradingCapital = 0.1447; // Saldo inicial
+let tradingCapital = 0.1447;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT = 0.001;
-const FEE_RESERVE = 0.006; // Margen mayor para fees y discrepancias
+const FEE_RESERVE = 0.006;
 const CRITICAL_THRESHOLD = 0.0005;
 const CYCLE_INTERVAL = 600000; // 10 minutos
 const UPDATE_INTERVAL = 720 * 60000; // 12 horas
-const REINVEST_THRESHOLD = 1; // 1 SOL
+const REINVEST_THRESHOLD = 1;
 
 let portfolio = {};
 let volatileTokens = [
@@ -25,7 +25,11 @@ let volatileTokens = [
     'AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB', // GST
     '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', // RAY
     '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj', // STSOL
-    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN'  // SLND
+    'SLNDpmoWTVXwSgMazM3M4Y5e8tFZwPdQXW3xatPDhyN',  // SLND
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+    '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs', // WETH
+    'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So'  // MSOL
 ];
 
 async function getTokenDecimals(mintPubKey) {
@@ -33,7 +37,6 @@ async function getTokenDecimals(mintPubKey) {
         const mint = await getMint(connection, new PublicKey(mintPubKey));
         return mint.decimals;
     } catch (error) {
-        console.log(`Error obteniendo decimales para ${mintPubKey}: ${error.message}`);
         return 6;
     }
 }
@@ -55,7 +58,8 @@ async function getWalletBalance() {
 }
 
 async function updateVolatileTokens() {
-    console.log('Lista de tokens volátiles estática por ahora:', volatileTokens);
+    console.log('Actualizando tokens volátiles...');
+    console.log('Lista actual:', volatileTokens);
 }
 
 async function selectBestToken() {
@@ -64,6 +68,7 @@ async function selectBestToken() {
     const availableCapital = tradingCapital - FEE_RESERVE;
 
     for (const tokenMint of volatileTokens) {
+        if (tokenMint === 'So11111111111111111111111111111111111111112') continue;
         try {
             const decimals = await getTokenDecimals(tokenMint);
             const quote = await jupiterApi.quoteGet({
@@ -82,16 +87,15 @@ async function selectBestToken() {
             console.log(`Error evaluando ${tokenMint}: ${error.message}`);
         }
     }
-    return bestToken ? { token: bestToken.token, amount: bestToken.amount, decimals: bestToken.decimals } : null;
+    if (bestToken) console.log(`Mejor token seleccionado: ${bestToken.token.toBase58()}`);
+    return bestToken;
 }
 
 async function buyToken(tokenPubKey, amountPerTrade) {
     try {
         const liquidBalance = await getWalletBalance();
         const tradeAmount = Math.min(amountPerTrade, liquidBalance - FEE_RESERVE);
-        if (tradeAmount < MIN_TRADE_AMOUNT) {
-            throw new Error(`Monto insuficiente para operar: ${tradeAmount} SOL`);
-        }
+        if (tradeAmount < MIN_TRADE_AMOUNT) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
         const quote = await jupiterApi.quoteGet({
@@ -217,13 +221,18 @@ async function tradingBot() {
         const { buyPrice, lastPrice } = portfolio[token];
         console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice}`);
 
+        const growth = currentPrice / buyPrice;
         const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
-        if (currentPrice <= buyPrice * 0.99) {
+
+        if (growth <= 0.99) {
             console.log(`Stop-loss: ${currentPrice} <= ${buyPrice * 0.99}`);
             await sellToken(new PublicKey(token));
-        } else if (currentPrice >= buyPrice * 1.05 && growthVsLast <= 0) {
-            console.log(`Take-profit: ${currentPrice} >= ${buyPrice * 1.05}`);
+        } else if (growth >= 1.075 && growthVsLast <= 0) {
+            console.log(`Take-profit 7.5%: ${growth * 100}% estabilizado`);
             await sellToken(new PublicKey(token));
+        } else if (growth > 1.075 && growthVsLast > 0) {
+            console.log(`Crecimiento sostenido: ${growth * 100}% | Esperando...`);
+            portfolio[token].lastPrice = currentPrice;
         } else {
             portfolio[token].lastPrice = currentPrice;
         }
