@@ -1,7 +1,7 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
 const bs58 = require('bs58');
-const { createJupiterApiClient } = require('@j-up/ag/api');
+const { createJupiterApiClient } = require('@jup-ag/api'); // Corregido de '@j-up/ag/api'
 const axios = require('axios');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
