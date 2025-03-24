@@ -15,7 +15,7 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 let tradingCapitalUsdt = 0;
 let savedUsdt = 0;
 const MIN_TRADE_AMOUNT_USDT = 0.1;
-const FEE_RESERVE_SOL = 0.01; // Mínimo 0.01 SOL
+const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 120000; // 2 min
 const UPDATE_INTERVAL = 300000; // 5 min
@@ -24,8 +24,8 @@ const MIN_VOLUME = 500000; // 500k$
 const MIN_VOLUME_TO_MC_RATIO = 2;
 const INITIAL_TAKE_PROFIT = 1.5; // 50%
 const MOONBAG_PORTION = 0.5;
-const MAX_PRICE_IMPACT = 0.1; // 10%
-const TARGET_INITIAL_USDT = 130; // 1 SOL equivalente
+const MAX_PRICE_IMPACT = 0.1;
+const TARGET_INITIAL_USDT = 130;
 
 let portfolio = {
     'AXGmqhcKcPC4bC7vNpxGtu5oEwoEEnyeQUdw9YwYWF1q': {
@@ -240,6 +240,9 @@ async function sellToken(tokenPubKey, portion = 1) {
             amount: Math.floor(sellAmount * (10 ** decimals)),
             slippageBps
         });
+        const usdtReceived = quote.outAmount / (10 ** 6); // USDT tiene 6 decimales
+        if (usdtReceived < 0.01) throw new Error('Venta insignificante, posible error de precio');
+
         const swapRequest = {
             quoteResponse: quote,
             userPublicKey: walletPubKey.toBase58(),
@@ -253,7 +256,6 @@ async function sellToken(tokenPubKey, portion = 1) {
         const txid = await connection.sendRawTransaction(transaction.serialize());
         await connection.confirmTransaction(txid);
 
-        const usdtReceived = quote.outAmount / (10 ** 6);
         console.log(`Venta (${portion * 100}%): ${txid} | ${usdtReceived} USDT de ${tokenMint}`);
 
         if (portion < 1) {
@@ -308,7 +310,7 @@ async function tradingBot() {
             amount: Math.floor(portfolio[token].amount * (10 ** decimals)),
             slippageBps: 1200
         });
-        const currentPrice = (quote.outAmount / (10 ** 6)) / portfolio[token].amount;
+        const currentPrice = (quote.outAmount / (10 ** 6)) / portfolio[token].amount; // Corregido: USDT decimales ya aplicados
         const { buyPrice, lastPrice, initialSold } = portfolio[token];
         console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice}`);
 
