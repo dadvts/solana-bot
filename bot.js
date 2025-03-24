@@ -10,24 +10,30 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalUsdt = 0;
-let savedSol = 0;
+let savedUsdt = 0;
 const MIN_TRADE_AMOUNT_USDT = 0.1;
-const FEE_RESERVE_SOL = 0.005;
+const FEE_RESERVE_SOL = 0.01; // Mínimo 0.01 SOL
 const CRITICAL_THRESHOLD_SOL = 0.0001;
-const CYCLE_INTERVAL = 600000;
-const UPDATE_INTERVAL = 1800000;
-const REINVEST_THRESHOLD_USDT = 100;
-const MAX_MARKET_CAP = 10000000;
-const MIN_VOLUME = 1000; // Reducido de 5000 a 1000
+const CYCLE_INTERVAL = 120000; // 2 min
+const UPDATE_INTERVAL = 300000; // 5 min
+const MAX_MARKET_CAP = 500000; // 500k$
+const MIN_VOLUME = 500000; // 500k$
+const MIN_VOLUME_TO_MC_RATIO = 2;
+const INITIAL_TAKE_PROFIT = 1.5; // 50%
+const MOONBAG_PORTION = 0.5;
+const MAX_PRICE_IMPACT = 0.1; // 10%
+const TARGET_INITIAL_USDT = 130; // 1 SOL equivalente
 
 let portfolio = {
-    '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': {
-        buyPrice: 1.74,
-        amount: 9.680922,
-        lastPrice: 1.7461368865486158,
-        decimals: 6
+    'AXGmqhcKcPC4bC7vNpxGtu5oEwoEEnyeQUdw9YwYWF1q': {
+        buyPrice: 0.00012972645498285213,
+        amount: 123969.22,
+        lastPrice: 0.0001305451557422612,
+        decimals: 6,
+        initialSold: false
     }
 };
 let volatileTokens = [];
@@ -42,6 +48,15 @@ async function getTokenDecimals(mintPubKey) {
     }
 }
 
+async function getWalletBalanceSol() {
+    const balance = await connection.getBalance(walletPubKey);
+    return balance / LAMPORTS_PER_SOL;
+}
+
+async function getWalletBalanceUsdt() {
+    return await getTokenBalance(USDT_MINT);
+}
+
 async function getTokenBalance(tokenMint) {
     try {
         const ata = await getAssociatedTokenAddress(new PublicKey(tokenMint), walletPubKey);
@@ -53,64 +68,70 @@ async function getTokenBalance(tokenMint) {
     }
 }
 
-async function getWalletBalanceSol() {
-    const balance = await connection.getBalance(walletPubKey);
-    return balance / LAMPORTS_PER_SOL;
+async function ensureSolForFees() {
+    const solBalance = await getWalletBalanceSol();
+    if (solBalance < FEE_RESERVE_SOL && tradingCapitalUsdt > 5) {
+        console.log('Comprando SOL para fees...');
+        const amountToSwap = 5;
+        const quote = await jupiterApi.quoteGet({
+            inputMint: USDT_MINT,
+            outputMint: SOL_MINT,
+            amount: Math.floor(amountToSwap * (10 ** 6)),
+            slippageBps: 500
+        });
+        const swapRequest = {
+            quoteResponse: quote,
+            userPublicKey: walletPubKey.toBase58(),
+            wrapAndUnwrapSol: true
+        };
+        const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
+        transaction.sign([keypair]);
+        const txid = await connection.sendRawTransaction(transaction.serialize());
+        await connection.confirmTransaction(txid);
+        tradingCapitalUsdt -= amountToSwap;
+        console.log(`SOL comprado: ${txid} | Nuevo saldo SOL: ${await getWalletBalanceSol()}`);
+    }
 }
 
-async function getWalletBalanceUsdt() {
-    return await getTokenBalance(USDT_MINT);
+async function fetchPumpFunTokens() {
+    try {
+        const response = await axios.get('https://frontend-api.pump.fun/mints?sort=market_cap&order=DESC&offset=0&limit=50');
+        const tokens = response.data
+            .filter(token => token.market_cap_usd < 60000 && token.volume_24h > 5000)
+            .map(token => ({ address: token.mint, symbol: token.symbol }));
+        console.log('Pump.fun tokens filtrados:', tokens);
+        return tokens.map(t => t.address);
+    } catch (error) {
+        console.log('Error fetching Pump.fun tokens:', error.message);
+        return [];
+    }
 }
 
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
+    const pumpFunTokens = await fetchPumpFunTokens();
     try {
         const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
-        console.log('Pares crudos:', dexResponse.data.pairs.slice(0, 5));
         const dexTokens = dexResponse.data.pairs
             .filter(pair => pair.chainId === 'solana' && 
                 pair.quoteToken.address === USDT_MINT && 
-                pair.volume.h24 > MIN_VOLUME && 
-                pair.fdv < MAX_MARKET_CAP)
-            .sort((a, b) => b.volume.h24 - a.volume.h24)
-            .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol }));
+                pair.volume.h1 > MIN_VOLUME && 
+                pair.fdv < MAX_MARKET_CAP && 
+                (pair.volume.h1 / pair.fdv) > MIN_VOLUME_TO_MC_RATIO)
+            .sort((a, b) => (b.volume.h1 / b.fdv) - (a.volume.h1 / a.fdv))
+            .map(pair => ({ address: pair.baseToken.address, symbol: pair.baseToken.symbol, liquidity: pair.liquidity.usd }));
 
-        console.log('DexTokens filtrados:', dexTokens);
-
-        const volatileWithHype = [];
-        for (const token of dexTokens.slice(0, 5)) {
-            const xPosts = await searchXPosts(token.symbol);
-            if (xPosts.length > 5) {
-                volatileWithHype.push(token.address);
-            }
-        }
-        console.log('Tokens con hype:', volatileWithHype);
-
-        volatileTokens = volatileWithHype.length > 0 ? volatileWithHype : dexTokens.map(t => t.address).slice(0, 10);
-        if (volatileTokens.length === 0) {
-            console.log('No hay tokens viables, usando lista de respaldo manual');
-            volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'];
-        }
+        console.log('DexScreener tokens filtrados:', dexTokens);
+        volatileTokens = [...pumpFunTokens, ...dexTokens.map(t => t.address)].slice(0, 10);
+        if (volatileTokens.length === 0) volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'];
         console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
-        console.log('Error actualizando tokens:', error.message);
-        volatileTokens = ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'];
-    }
-}
-
-async function searchXPosts(symbol) {
-    console.log('X_API_TOKEN:', process.env.X_API_TOKEN ? 'Configurado' : 'No configurado');
-    try {
-        const query = `${symbol} crypto OR token -inurl:(login OR signup)`;
-        const posts = await axios.get(`https://api.twitter.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=50`, {
-            headers: { 'Authorization': `Bearer ${process.env.X_API_TOKEN}` }
-        });
-        console.log(`Posts encontrados para ${symbol}: ${posts.data.data?.length || 0}`);
-        return posts.data.data || [];
-    } catch (error) {
-        console.log(`Error buscando ${symbol} en X: ${error.response?.status || error.message}`);
-        return [];
+        console.log('Error DexScreener:', error.message);
+        volatileTokens = pumpFunTokens.length > 0 ? pumpFunTokens : ['4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'];
     }
 }
 
@@ -127,7 +148,7 @@ async function selectBestToken() {
                 inputMint: USDT_MINT,
                 outputMint: tokenMint,
                 amount: Math.floor(availableCapital * (10 ** 6)),
-                slippageBps: 500
+                slippageBps: 1200
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
             const returnPerUsdt = tokenAmount / availableCapital;
@@ -139,8 +160,7 @@ async function selectBestToken() {
             console.log(`Error evaluando ${tokenMint}: ${error.message}`);
         }
     }
-    if (bestToken) console.log(`Mejor token seleccionado: ${bestToken.token.toBase58()}`);
-    else console.log('No se encontró un token viable para comprar');
+    if (bestToken) console.log(`Mejor token: ${bestToken.token.toBase58()}`);
     return bestToken;
 }
 
@@ -148,16 +168,19 @@ async function buyToken(tokenPubKey, amountPerTrade) {
     try {
         const liquidBalanceUsdt = await getWalletBalanceUsdt();
         const solBalance = await getWalletBalanceSol();
-        if (solBalance < FEE_RESERVE_SOL) throw new Error('Saldo SOL insuficiente para fees');
-        const tradeAmount = Math.min(amountPerTrade * 0.95, liquidBalanceUsdt);
+        if (solBalance < FEE_RESERVE_SOL) await ensureSolForFees();
+        const dexPair = (await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenPubKey.toBase58()}`)).data.pairs[0];
+        const liquidityUsd = dexPair?.liquidity?.usd || 10000;
+        const tradeAmount = Math.min(amountPerTrade * 0.95, liquidBalanceUsdt, liquidityUsd * MAX_PRICE_IMPACT);
         if (tradeAmount < MIN_TRADE_AMOUNT_USDT) throw new Error(`Monto insuficiente: ${tradeAmount} USDT`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
+        const slippageBps = liquidityUsd < 100000 ? 1500 : 1200;
         const quote = await jupiterApi.quoteGet({
             inputMint: USDT_MINT,
             outputMint: tokenPubKey.toBase58(),
             amount: Math.floor(tradeAmount * (10 ** 6)),
-            slippageBps: 500
+            slippageBps
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
 
@@ -178,18 +201,19 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             buyPrice: tradeAmount / tokenAmount,
             amount: tokenAmount,
             lastPrice: tradeAmount / tokenAmount,
-            decimals
+            decimals,
+            initialSold: false
         };
         tradingCapitalUsdt -= tradeAmount;
         console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Capital: ${tradingCapitalUsdt} USDT`);
     } catch (error) {
-        console.log(`Error en compra de ${tokenPubKey.toBase58()}: ${error.message}`);
+        console.log(`Error compra ${tokenPubKey.toBase58()}: ${error.message}`);
     }
 }
 
-async function sellToken(tokenPubKey) {
+async function sellToken(tokenPubKey, portion = 1) {
     const tokenMint = tokenPubKey.toBase58();
-    const { buyPrice, amount, decimals } = portfolio[tokenMint];
+    const { buyPrice, amount, decimals, initialSold } = portfolio[tokenMint];
     const realBalance = await getTokenBalance(tokenMint);
 
     if (realBalance < amount) {
@@ -201,15 +225,20 @@ async function sellToken(tokenPubKey) {
         }
     }
 
+    const sellAmount = realBalance * portion;
     try {
         const solBalance = await getWalletBalanceSol();
-        if (solBalance < FEE_RESERVE_SOL) throw new Error('Saldo SOL insuficiente para fees');
+        if (solBalance < FEE_RESERVE_SOL) await ensureSolForFees();
+
+        const dexPair = (await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`)).data.pairs[0];
+        const liquidityUsd = dexPair?.liquidity?.usd || 10000;
+        const slippageBps = portion < 1 ? 2000 : 1200;
 
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
             outputMint: USDT_MINT,
-            amount: Math.floor(portfolio[tokenMint].amount * (10 ** decimals)),
-            slippageBps: 500
+            amount: Math.floor(sellAmount * (10 ** decimals)),
+            slippageBps
         });
         const swapRequest = {
             quoteResponse: quote,
@@ -225,19 +254,24 @@ async function sellToken(tokenPubKey) {
         await connection.confirmTransaction(txid);
 
         const usdtReceived = quote.outAmount / (10 ** 6);
-        console.log(`Venta: ${txid} | ${usdtReceived} USDT de ${tokenMint}`);
-        lastSoldToken = tokenMint;
-        delete portfolio[tokenMint];
+        console.log(`Venta (${portion * 100}%): ${txid} | ${usdtReceived} USDT de ${tokenMint}`);
 
-        const totalUsdt = tradingCapitalUsdt + usdtReceived;
-        if (totalUsdt < REINVEST_THRESHOLD_USDT) {
+        if (portion < 1) {
+            portfolio[tokenMint].amount -= sellAmount;
+            portfolio[tokenMint].initialSold = true;
+        } else {
+            lastSoldToken = tokenMint;
+            delete portfolio[tokenMint];
+        }
+
+        if (tradingCapitalUsdt + savedUsdt < TARGET_INITIAL_USDT) {
             tradingCapitalUsdt += usdtReceived;
         } else {
-            const profit = usdtReceived - (amount * buyPrice);
+            const profit = usdtReceived - (sellAmount * buyPrice);
             const reinvest = profit * 0.5;
-            tradingCapitalUsdt += reinvest;
-            savedSol += (usdtReceived - reinvest) / 130;
-            console.log(`Reinversión: ${reinvest} USDT | Guardado: ${savedSol} SOL`);
+            tradingCapitalUsdt = Math.max(TARGET_INITIAL_USDT, tradingCapitalUsdt + reinvest);
+            savedUsdt += (usdtReceived - reinvest);
+            console.log(`Reinversión: ${reinvest} USDT | Guardado: ${savedUsdt} USDT`);
         }
         return usdtReceived;
     } catch (error) {
@@ -250,7 +284,7 @@ async function tradingBot() {
     console.log('Ciclo de trading...');
     const realBalanceSol = await getWalletBalanceSol();
     const realBalanceUsdt = await getWalletBalanceUsdt();
-    console.log(`Saldo real: ${realBalanceSol} SOL | Capital: ${realBalanceUsdt} USDT | Guardado: ${savedSol} SOL`);
+    console.log(`Saldo real: ${realBalanceSol} SOL | Capital: ${realBalanceUsdt} USDT | Guardado: ${savedUsdt} USDT`);
     tradingCapitalUsdt = realBalanceUsdt;
 
     if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
@@ -261,12 +295,8 @@ async function tradingBot() {
 
     if (Object.keys(portfolio).length === 0) {
         if (tradingCapitalUsdt >= MIN_TRADE_AMOUNT_USDT && realBalanceSol >= FEE_RESERVE_SOL) {
-            console.log('Intentando comprar un nuevo token...');
             const bestToken = await selectBestToken();
             if (bestToken) await buyToken(bestToken.token, tradingCapitalUsdt);
-            else console.log('No hay tokens disponibles para comprar');
-        } else {
-            console.log(`Capital insuficiente: ${tradingCapitalUsdt} USDT o SOL: ${realBalanceSol}`);
         }
     }
 
@@ -276,29 +306,29 @@ async function tradingBot() {
             inputMint: token,
             outputMint: USDT_MINT,
             amount: Math.floor(portfolio[token].amount * (10 ** decimals)),
-            slippageBps: 500
+            slippageBps: 1200
         });
         const currentPrice = (quote.outAmount / (10 ** 6)) / portfolio[token].amount;
-        const { buyPrice, lastPrice } = portfolio[token];
+        const { buyPrice, lastPrice, initialSold } = portfolio[token];
         console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice}`);
 
         const growth = currentPrice / buyPrice;
         const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
-        if (growth <= 0.99) {
-            console.log(`Stop-loss: ${currentPrice} <= ${buyPrice * 0.99}`);
+        if (currentPrice <= buyPrice) {
+            console.log(`Stop-loss: ${currentPrice} <= ${buyPrice}`);
             await sellToken(new PublicKey(token));
-        } else if (growth >= 1.075 && growthVsLast <= 0) {
-            console.log(`Take-profit 7.5%: ${growth * 100}% estabilizado`);
+        } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
+            console.log(`Take-profit inicial ${INITIAL_TAKE_PROFIT * 100 - 100}%: ${growth * 100}%`);
+            await sellToken(new PublicKey(token), 1 - MOONBAG_PORTION);
+        } else if (initialSold && (growthVsLast <= 0 || growth < 1.4)) {
+            console.log(`Moonbag venta: ${growth * 100}% (estabilizado o < 40%)`);
             await sellToken(new PublicKey(token));
-        } else if (growth > 1.075 && growthVsLast > 0) {
-            console.log(`Crecimiento sostenido: ${growth * 100}% | Esperando...`);
-            portfolio[token].lastPrice = currentPrice;
         } else {
             portfolio[token].lastPrice = currentPrice;
         }
     }
-    console.log('Ciclo completado. Esperando próximo ciclo en 10 minutos...');
+    console.log('Ciclo completado. Esperando próximo ciclo en 2 minutos...');
 }
 
 async function startBot() {
