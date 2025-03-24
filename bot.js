@@ -372,7 +372,8 @@ async function tradingBot() {
                 console.log(`Moonbag venta: ${growth * 100}% (estabilizado o < 40%)`);
                 await sellToken(new PublicKey(token));
             } else {
-                portfolio[token].lastPrice = currentPrice;
+                console.log(`Esperando: Crecimiento ${Math.round(growth * 100)}% (objetivo ${INITIAL_TAKE_PROFIT * 100}%)`);
+                portfolio[token].lastPrice = currentPrice; // Actualiza lastPrice
             }
         }
     }
