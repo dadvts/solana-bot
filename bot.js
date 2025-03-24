@@ -11,6 +11,7 @@ const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const URKO_MINT = 'AXGmqhcKcPC4bC7vNpxGtu5oEwoEEnyeQUdw9YwYWF1q';
 
 let tradingCapitalUsdt = 0;
 let savedUsdt = 0;
@@ -27,7 +28,7 @@ const MOONBAG_PORTION = 0.5;
 const MAX_PRICE_IMPACT = 0.1;
 const TARGET_INITIAL_USDT = 130;
 
-let portfolio = {}; // Vacío tras venta confirmada
+let portfolio = {};
 let volatileTokens = [];
 let lastSoldToken = null;
 
@@ -229,13 +230,10 @@ async function sellToken(tokenPubKey, portion = 1) {
     const { buyPrice, amount, decimals, initialSold } = portfolio[tokenMint];
     const realBalance = await getTokenBalance(tokenMint);
 
-    if (realBalance < amount) {
-        portfolio[tokenMint].amount = realBalance;
-        if (realBalance === 0) {
-            delete portfolio[tokenMint];
-            console.log(`No hay ${tokenMint} para vender`);
-            return 0;
-        }
+    if (realBalance === 0) {
+        delete portfolio[tokenMint];
+        console.log(`No hay ${tokenMint} para vender`);
+        return 0;
     }
 
     const sellAmount = realBalance * portion;
@@ -271,12 +269,12 @@ async function sellToken(tokenPubKey, portion = 1) {
         
         if (!confirmation.value.err) {
             console.log(`Venta (${portion * 100}%): ${txid} | ${usdtReceived} USDT de ${tokenMint}`);
-            if (portion < 1) {
-                portfolio[tokenMint].amount -= sellAmount;
-                portfolio[tokenMint].initialSold = true;
-            } else {
+            portfolio[tokenMint].amount = await getTokenBalance(tokenMint); // Actualiza saldo real
+            if (portfolio[tokenMint].amount === 0) {
                 lastSoldToken = tokenMint;
                 delete portfolio[tokenMint];
+            } else if (portion < 1) {
+                portfolio[tokenMint].initialSold = true;
             }
             if (tradingCapitalUsdt + savedUsdt < TARGET_INITIAL_USDT) {
                 tradingCapitalUsdt += usdtReceived;
@@ -304,14 +302,30 @@ async function getTokenPrice(tokenMint) {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
             outputMint: USDT_MINT,
-            amount: 10 ** decimals, // 1 unidad del token en lamports
+            amount: 10 ** decimals, // 1 unidad del token
             slippageBps: 1200
         });
-        const price = quote.outAmount / (10 ** 6); // USDT tiene 6 decimales
+        const price = quote.outAmount / (10 ** 6); // Precio en USDT por 1 token
         return price;
     } catch (error) {
         console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
         return null;
+    }
+}
+
+async function syncPortfolio() {
+    const urkoBalance = await getTokenBalance(URKO_MINT);
+    if (urkoBalance > 0 && !portfolio[URKO_MINT]) {
+        const decimals = await getTokenDecimals(URKO_MINT);
+        const currentPrice = await getTokenPrice(URKO_MINT) || 0.0001305451557422612; // Fallback al último precio conocido
+        portfolio[URKO_MINT] = {
+            buyPrice: 0.00012972645498285213,
+            amount: urkoBalance,
+            lastPrice: currentPrice,
+            decimals,
+            initialSold: false
+        };
+        console.log(`URKO sincronizado en portfolio: ${urkoBalance} tokens`);
     }
 }
 
@@ -321,6 +335,8 @@ async function tradingBot() {
     const realBalanceUsdt = await getWalletBalanceUsdt();
     console.log(`Saldo real: ${realBalanceSol} SOL | Capital: ${realBalanceUsdt} USDT | Guardado: ${savedUsdt} USDT`);
     tradingCapitalUsdt = realBalanceUsdt;
+
+    await syncPortfolio(); // Sincroniza URKO si está en la wallet
 
     if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
         console.log('Umbral crítico SOL: vendiendo todo...');
