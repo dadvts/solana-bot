@@ -106,27 +106,29 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT');
-        console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
+        // Usar trending tokens en Solana desde DexScreener
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/trending?chainId=solana');
+        console.log('Respuesta DexScreener trending:', dexResponse.data.pairs.length, 'pares encontrados');
         const allPairs = dexResponse.data.pairs.map(pair => ({
             address: pair.baseToken.address,
             symbol: pair.baseToken.symbol,
             volumeH1: pair.volume.h1,
             fdv: pair.fdv,
             liquidity: pair.liquidity.usd,
-            ratio: pair.volume.h1 / pair.fdv
+            ratio: pair.volume.h1 / pair.fdv,
+            quoteToken: pair.quoteToken.address
         }));
         const dexTokens = allPairs
             .filter(pair => pair.chainId === 'solana' && 
-                pair.quoteToken.address === USDT_MINT && 
+                pair.quoteToken === USDT_MINT && 
                 pair.volumeH1 >= MIN_VOLUME && 
                 pair.fdv >= MIN_MARKET_CAP && 
                 pair.ratio >= MIN_VOLUME_TO_MC_RATIO && 
                 pair.liquidity >= MIN_LIQUIDITY)
             .sort((a, b) => b.ratio - a.ratio)
-            .map(pair => ({ address: pair.address, symbol: pair.baseToken.symbol, liquidity: pair.liquidity }));
+            .map(pair => ({ address: pair.address, symbol: pair.symbol, liquidity: pair.liquidity }));
 
-        console.log('Todos los pares DexScreener:', allPairs.slice(0, 5));
+        console.log('Todos los pares trending DexScreener:', allPairs.slice(0, 5));
         console.log('DexScreener tokens filtrados:', dexTokens);
         volatileTokens = dexTokens.map(t => t.address).slice(0, 10);
         if (volatileTokens.length === 0) {
