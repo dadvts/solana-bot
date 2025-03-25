@@ -44,7 +44,7 @@ async function getTokenDecimals(mintPubKey) {
 
 async function getWalletBalanceSol() {
     try {
-        const balance = await connection.getBalance(wallet©PubKey);
+        const balance = await connection.getBalance(walletPubKey);
         return balance / LAMPORTS_PER_SOL;
     } catch (error) {
         console.log(`Error obteniendo saldo SOL: ${error.message}`);
