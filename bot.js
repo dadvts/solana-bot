@@ -19,10 +19,10 @@ const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 60000; // 1 min
 const UPDATE_INTERVAL = 180000; // 3 min
-const MIN_MARKET_CAP = 500000; // USD
-const MIN_VOLUME = 10000; // USD (1h)
-const MIN_VOLUME_TO_MC_RATIO = 0.1;
-const MIN_LIQUIDITY = 5000; // USD
+const MIN_MARKET_CAP = 1000000; // 1M USD
+const MIN_VOLUME = 200000; // 200K USD (1h)
+const MIN_VOLUME_TO_MC_RATIO = 0.2;
+const MIN_LIQUIDITY = 10000; // 10K USD
 const INITIAL_TAKE_PROFIT = 1.3; // 30%
 const MOONBAG_PORTION = 0.5;
 const MAX_PRICE_IMPACT = 0.1;
@@ -44,7 +44,7 @@ async function getTokenDecimals(mintPubKey) {
 
 async function getWalletBalanceSol() {
     try {
-        const balance = await connection.getBalance(walletPubKey);
+        const balance = await connection.getBalance(wallet©PubKey);
         return balance / LAMPORTS_PER_SOL;
     } catch (error) {
         console.log(`Error obteniendo saldo SOL: ${error.message}`);
@@ -106,18 +106,22 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        // Usar trending tokens en Solana desde DexScreener
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/trending?chainId=solana');
-        console.log('Respuesta DexScreener trending:', dexResponse.data.pairs.length, 'pares encontrados');
-        const allPairs = dexResponse.data.pairs.map(pair => ({
+        // Usar multiples tokens trending en Solana
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens');
+        const pairs = response.data.pairs || [];
+        console.log('Respuesta DexScreener:', pairs.length, 'pares encontrados');
+        
+        const allPairs = pairs.map(pair => ({
             address: pair.baseToken.address,
             symbol: pair.baseToken.symbol,
-            volumeH1: pair.volume.h1,
-            fdv: pair.fdv,
-            liquidity: pair.liquidity.usd,
-            ratio: pair.volume.h1 / pair.fdv,
-            quoteToken: pair.quoteToken.address
+            volumeH1: pair.volume?.h1 || 0,
+            fdv: pair.fdv || 0,
+            liquidity: pair.liquidity?.usd || 0,
+            ratio: pair.fdv ? (pair.volume?.h1 || 0) / pair.fdv : 0,
+            quoteToken: pair.quoteToken.address,
+            chainId: pair.chainId
         }));
+        
         const dexTokens = allPairs
             .filter(pair => pair.chainId === 'solana' && 
                 pair.quoteToken === USDT_MINT && 
@@ -128,7 +132,7 @@ async function updateVolatileTokens() {
             .sort((a, b) => b.ratio - a.ratio)
             .map(pair => ({ address: pair.address, symbol: pair.symbol, liquidity: pair.liquidity }));
 
-        console.log('Todos los pares trending DexScreener:', allPairs.slice(0, 5));
+        console.log('Todos los pares DexScreener:', allPairs.slice(0, 5));
         console.log('DexScreener tokens filtrados:', dexTokens);
         volatileTokens = dexTokens.map(t => t.address).slice(0, 10);
         if (volatileTokens.length === 0) {
@@ -176,18 +180,15 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const liquidBalanceUsdt = await getWalletBalanceUsdt();
         const solBalance = await getWalletBalanceSol();
         if (solBalance < FEE_RESERVE_SOL) await ensureSolForFees();
-        const dexPair = (await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenPubKey.toBase58()}`)).data.pairs[0];
-        const liquidityUsd = dexPair?.liquidity?.usd || MIN_LIQUIDITY;
-        const tradeAmount = Math.min(amountPerTrade * 0.95, liquidBalanceUsdt, liquidityUsd * MAX_PRICE_IMPACT);
+        const tradeAmount = Math.min(amountPerTrade * 0.95, liquidBalanceUsdt);
         if (tradeAmount < MIN_TRADE_AMOUNT_USDT) throw new Error(`Monto insuficiente: ${tradeAmount} USDT`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
-        const slippageBps = liquidityUsd < 100000 ? 1500 : 1200;
         const quote = await jupiterApi.quoteGet({
             inputMint: USDT_MINT,
             outputMint: tokenPubKey.toBase58(),
             amount: Math.floor(tradeAmount * (10 ** 6)),
-            slippageBps
+            slippageBps: 1200
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
 
@@ -241,18 +242,14 @@ async function sellToken(tokenPubKey, portion = 1) {
         const solBalance = await getWalletBalanceSol();
         if (solBalance < FEE_RESERVE_SOL) await ensureSolForFees();
 
-        const dexPair = (await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`)).data.pairs[0];
-        const liquidityUsd = dexPair?.liquidity?.usd || MIN_LIQUIDITY;
-        const slippageBps = portion < 1 ? 2000 : 1200;
-
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
             outputMint: USDT_MINT,
             amount: Math.floor(sellAmount * (10 ** decimals)),
-            slippageBps
+            slippageBps: 1200
         });
         const usdtReceived = quote.outAmount / (10 ** 6);
-        if (usdtReceived < 0.01) throw new Error('Venta insignificante, posible error de precio');
+        if (usdtReceived < 0.01) throw new Error('Venta insignificante');
 
         const swapRequest = {
             quoteResponse: quote,
@@ -311,7 +308,7 @@ async function getTokenPrice(tokenMint) {
             slippageBps: 1200
         });
         const price = quote.outAmount / (10 ** 6);
-        console.log(`Usando precio de Jupiter para ${tokenMint}: ${price} (DexScreener falló)`);
+        console.log(`Usando precio de Jupiter para ${tokenMint}: ${price}`);
         return price;
     } catch (error) {
         console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
