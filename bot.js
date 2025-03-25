@@ -106,25 +106,32 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        // Usar multiples tokens trending en Solana
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens');
-        const pairs = response.data.pairs || [];
-        console.log('Respuesta DexScreener:', pairs.length, 'pares encontrados');
-        
-        const allPairs = pairs.map(pair => ({
-            address: pair.baseToken.address,
-            symbol: pair.baseToken.symbol,
-            volumeH1: pair.volume?.h1 || 0,
-            fdv: pair.fdv || 0,
-            liquidity: pair.liquidity?.usd || 0,
-            ratio: pair.fdv ? (pair.volume?.h1 || 0) / pair.fdv : 0,
-            quoteToken: pair.quoteToken.address,
-            chainId: pair.chainId
-        }));
-        
-        const dexTokens = allPairs
-            .filter(pair => pair.chainId === 'solana' && 
-                pair.quoteToken === USDT_MINT && 
+        const response = await axios.get('https://api.raydium.io/v2/amm/pools');
+        const pools = response.data.data || [];
+        console.log('Respuesta Raydium:', pools.length, 'pools encontrados');
+
+        const allPairs = pools.map(pool => {
+            const baseMint = pool.baseMint;
+            const quoteMint = pool.quoteMint;
+            const volumeH1 = pool.volume24hQuote ? pool.volume24hQuote / 24 : 0; // Aproximación 1h
+            const liquidity = pool.tvl || 0;
+            const baseSupply = pool.baseReserve / (10 ** pool.baseDecimals);
+            const price = (pool.quoteReserve / (10 ** pool.quoteDecimals)) / baseSupply;
+            const fdv = baseSupply * price;
+
+            return {
+                address: baseMint,
+                symbol: pool.baseSymbol || 'UNKNOWN',
+                volumeH1,
+                fdv,
+                liquidity,
+                ratio: fdv ? volumeH1 / fdv : 0,
+                quoteToken: quoteMint
+            };
+        });
+
+        const volatilePairs = allPairs
+            .filter(pair => pair.quoteToken === USDT_MINT && 
                 pair.volumeH1 >= MIN_VOLUME && 
                 pair.fdv >= MIN_MARKET_CAP && 
                 pair.ratio >= MIN_VOLUME_TO_MC_RATIO && 
@@ -132,16 +139,16 @@ async function updateVolatileTokens() {
             .sort((a, b) => b.ratio - a.ratio)
             .map(pair => ({ address: pair.address, symbol: pair.symbol, liquidity: pair.liquidity }));
 
-        console.log('Todos los pares DexScreener:', allPairs.slice(0, 5));
-        console.log('DexScreener tokens filtrados:', dexTokens);
-        volatileTokens = dexTokens.map(t => t.address).slice(0, 10);
+        console.log('Todos los pares Raydium:', allPairs.slice(0, 5));
+        console.log('Raydium tokens filtrados:', volatilePairs);
+        volatileTokens = volatilePairs.map(t => t.address).slice(0, 10);
         if (volatileTokens.length === 0) {
             console.log('No se encontraron tokens volátiles viables');
             volatileTokens = [];
         }
         console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
-        console.log('Error DexScreener:', error.message);
+        console.log('Error Raydium:', error.message);
         volatileTokens = [];
     }
 }
@@ -295,11 +302,6 @@ async function sellToken(tokenPubKey, portion = 1) {
 
 async function getTokenPrice(tokenMint) {
     try {
-        const dexResponse = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`);
-        const pair = dexResponse.data.pairs.find(p => p.quoteToken.address === USDT_MINT && p.chainId === 'solana');
-        if (pair && pair.priceUsd) {
-            return parseFloat(pair.priceUsd);
-        }
         const decimals = await getTokenDecimals(tokenMint);
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
@@ -308,7 +310,6 @@ async function getTokenPrice(tokenMint) {
             slippageBps: 1200
         });
         const price = quote.outAmount / (10 ** 6);
-        console.log(`Usando precio de Jupiter para ${tokenMint}: ${price}`);
         return price;
     } catch (error) {
         console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
