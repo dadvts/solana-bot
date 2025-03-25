@@ -19,10 +19,10 @@ const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 60000; // 1 min
 const UPDATE_INTERVAL = 180000; // 3 min
-const MAX_MARKET_CAP = 100000; // USD
-const MIN_VOLUME = 500; // USD (1h)
-const MIN_VOLUME_TO_MC_RATIO = 0.5;
-const MIN_LIQUIDITY = 1000; // USD
+const MIN_MARKET_CAP = 500000; // USD
+const MIN_VOLUME = 10000; // USD (1h)
+const MIN_VOLUME_TO_MC_RATIO = 0.1;
+const MIN_LIQUIDITY = 5000; // USD
 const INITIAL_TAKE_PROFIT = 1.3; // 30%
 const MOONBAG_PORTION = 0.5;
 const MAX_PRICE_IMPACT = 0.1;
@@ -103,25 +103,10 @@ async function ensureSolForFees() {
     }
 }
 
-async function fetchPumpFunTokens() {
-    try {
-        const response = await axios.get('https://frontend-api.pump.fun/mints?sort=market_cap&order=ASC&offset=0&limit=50');
-        const tokens = response.data
-            .filter(token => token.market_cap_usd >= 1000 && token.market_cap_usd <= MAX_MARKET_CAP && token.volume_24h >= MIN_VOLUME)
-            .map(token => ({ address: token.mint, symbol: token.symbol, marketCap: token.market_cap_usd }));
-        console.log('Pump.fun tokens filtrados:', tokens);
-        return tokens.map(t => t.address);
-    } catch (error) {
-        console.log('Error fetching Pump.fun tokens:', error.message);
-        return [];
-    }
-}
-
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
-    let pumpFunTokens = await fetchPumpFunTokens();
     try {
-        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/tokens/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
+        const dexResponse = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT');
         console.log('Respuesta DexScreener:', dexResponse.data.pairs.length, 'pares encontrados');
         const allPairs = dexResponse.data.pairs.map(pair => ({
             address: pair.baseToken.address,
@@ -135,29 +120,23 @@ async function updateVolatileTokens() {
             .filter(pair => pair.chainId === 'solana' && 
                 pair.quoteToken.address === USDT_MINT && 
                 pair.volumeH1 >= MIN_VOLUME && 
-                pair.fdv >= 1000 && pair.fdv <= MAX_MARKET_CAP && 
+                pair.fdv >= MIN_MARKET_CAP && 
                 pair.ratio >= MIN_VOLUME_TO_MC_RATIO && 
                 pair.liquidity >= MIN_LIQUIDITY)
             .sort((a, b) => b.ratio - a.ratio)
-            .map(pair => ({ address: pair.address, symbol: pair.symbol, liquidity: pair.liquidity }));
+            .map(pair => ({ address: pair.address, symbol: pair.baseToken.symbol, liquidity: pair.liquidity }));
 
-        console.log('Todos los pares DexScreener:', allPairs.slice(0, 5)); // Depuración: primeros 5 pares
+        console.log('Todos los pares DexScreener:', allPairs.slice(0, 5));
         console.log('DexScreener tokens filtrados:', dexTokens);
-        volatileTokens = [...pumpFunTokens, ...dexTokens.map(t => t.address)].slice(0, 10);
+        volatileTokens = dexTokens.map(t => t.address).slice(0, 10);
         if (volatileTokens.length === 0) {
             console.log('No se encontraron tokens volátiles viables');
-            volatileTokens = [
-                '7xCbxRhJzfP7f2HopGwPretw8zWRvjDHNKoUn58nKuwj', // Ejemplo microcap
-                '6aE1iWJD3jRL82AvDrYGCjT3bJyh94v3q2c8vFBEjYAh'  // Ejemplo microcap
-            ]; // Fallback temporal
+            volatileTokens = [];
         }
         console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
         console.log('Error DexScreener:', error.message);
-        volatileTokens = pumpFunTokens.length > 0 ? pumpFunTokens : [
-            '7xCbxRhJzfP7f2HopGwPretw8zWRvjDHNKoUn58nKuwj',
-            '6aE1iWJD3jRL82AvDrYGCjT3bJyh94v3q2c8vFBEjYAh'
-        ];
+        volatileTokens = [];
     }
 }
 
