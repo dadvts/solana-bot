@@ -106,47 +106,65 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.raydium.io/v2/main/pairs');
-        const pairs = response.data || [];
-        console.log('Respuesta Raydium:', pairs.length, 'pares encontrados');
-
+        const response = await axios.get('https://api.raydium.io/v2/main/pairs', { responseType: 'stream' });
         const volatilePairs = [];
-        let processed = 0;
-        const maxProcess = 1000; // Límite para evitar exceso de memoria
+        let buffer = '';
 
-        for (const pair of pairs) {
-            if (processed >= maxProcess) break;
-            processed++;
+        response.data.on('data', (chunk) => {
+            buffer += chunk.toString();
+            let boundary;
+            while ((boundary = buffer.indexOf('},')) !== -1) {
+                const pairStr = buffer.slice(0, boundary + 1);
+                buffer = buffer.slice(boundary + 2);
+                try {
+                    const pair = JSON.parse(pairStr + '}'); // Completar el objeto
+                    const baseMint = pair.base_token;
+                    const quoteMint = pair.quote_token;
+                    if (quoteMint !== USDT_MINT) continue;
 
-            const baseMint = pair.base_token;
-            const quoteMint = pair.quote_token;
-            if (quoteMint !== USDT_MINT) continue;
+                    const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0;
+                    const liquidity = pair.liquidity || 0;
+                    const price = pair.price || 0;
+                    const fdv = pair.fdv || (pair.total_supply * price);
 
-            const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0;
-            const liquidity = pair.liquidity || 0;
-            const price = pair.price || 0;
-            const fdv = pair.fdv || (pair.total_supply * price);
+                    if (
+                        volumeH1 >= MIN_VOLUME &&
+                        fdv >= MIN_MARKET_CAP &&
+                        liquidity >= MIN_LIQUIDITY &&
+                        fdv && (volumeH1 / fdv) >= MIN_VOLUME_TO_MC_RATIO
+                    ) {
+                        volatilePairs.push({
+                            address: baseMint,
+                            symbol: pair.name.split('/')[0] || 'UNKNOWN',
+                            liquidity
+                        });
+                    }
 
-            if (volumeH1 >= MIN_VOLUME && 
-                fdv >= MIN_MARKET_CAP && 
-                liquidity >= MIN_LIQUIDITY && 
-                fdv && (volumeH1 / fdv) >= MIN_VOLUME_TO_MC_RATIO) {
-                volatilePairs.push({
-                    address: baseMint,
-                    symbol: pair.name.split('/')[0] || 'UNKNOWN',
-                    liquidity
-                });
+                    // Limitar a 5 tokens para reducir memoria
+                    if (volatilePairs.length > 5) {
+                        volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
+                        volatilePairs.pop();
+                    }
+                } catch (e) {
+                    console.log('Error parseando par:', e.message);
+                }
             }
-        }
+        });
 
-        volatilePairs.sort((a, b) => b.liquidity - a.liquidity); // Ordenar por liquidez como proxy
-        console.log('Raydium tokens filtrados:', volatilePairs.slice(0, 10));
-        volatileTokens = volatilePairs.map(t => t.address).slice(0, 10);
+        await new Promise((resolve, reject) => {
+            response.data.on('end', () => {
+                volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
+                volatileTokens = volatilePairs.map(t => t.address);
+                console.log('Lista actualizada:', volatileTokens);
+                resolve();
+            });
+            response.data.on('error', reject);
+        });
+
         if (volatileTokens.length === 0) {
             console.log('No se encontraron tokens volátiles viables');
             volatileTokens = [];
         }
-        console.log('Lista actualizada:', volatileTokens);
     } catch (error) {
         console.log('Error Raydium:', error.message);
         volatileTokens = [];
