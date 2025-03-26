@@ -110,36 +110,37 @@ async function updateVolatileTokens() {
         const pairs = response.data || [];
         console.log('Respuesta Raydium:', pairs.length, 'pares encontrados');
 
-        const allPairs = pairs.map(pair => {
+        const volatilePairs = [];
+        let processed = 0;
+        const maxProcess = 1000; // Límite para evitar exceso de memoria
+
+        for (const pair of pairs) {
+            if (processed >= maxProcess) break;
+            processed++;
+
             const baseMint = pair.base_token;
             const quoteMint = pair.quote_token;
-            const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0; // Aproximación 1h
+            if (quoteMint !== USDT_MINT) continue;
+
+            const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0;
             const liquidity = pair.liquidity || 0;
             const price = pair.price || 0;
             const fdv = pair.fdv || (pair.total_supply * price);
 
-            return {
-                address: baseMint,
-                symbol: pair.name.split('/')[0] || 'UNKNOWN',
-                volumeH1,
-                fdv,
-                liquidity,
-                ratio: fdv ? volumeH1 / fdv : 0,
-                quoteToken: quoteMint
-            };
-        });
+            if (volumeH1 >= MIN_VOLUME && 
+                fdv >= MIN_MARKET_CAP && 
+                liquidity >= MIN_LIQUIDITY && 
+                fdv && (volumeH1 / fdv) >= MIN_VOLUME_TO_MC_RATIO) {
+                volatilePairs.push({
+                    address: baseMint,
+                    symbol: pair.name.split('/')[0] || 'UNKNOWN',
+                    liquidity
+                });
+            }
+        }
 
-        const volatilePairs = allPairs
-            .filter(pair => pair.quoteToken === USDT_MINT && 
-                pair.volumeH1 >= MIN_VOLUME && 
-                pair.fdv >= MIN_MARKET_CAP && 
-                pair.ratio >= MIN_VOLUME_TO_MC_RATIO && 
-                pair.liquidity >= MIN_LIQUIDITY)
-            .sort((a, b) => b.ratio - a.ratio)
-            .map(pair => ({ address: pair.address, symbol: pair.symbol, liquidity: pair.liquidity }));
-
-        console.log('Todos los pares Raydium:', allPairs.slice(0, 5));
-        console.log('Raydium tokens filtrados:', volatilePairs);
+        volatilePairs.sort((a, b) => b.liquidity - a.liquidity); // Ordenar por liquidez como proxy
+        console.log('Raydium tokens filtrados:', volatilePairs.slice(0, 10));
         volatileTokens = volatilePairs.map(t => t.address).slice(0, 10);
         if (volatileTokens.length === 0) {
             console.log('No se encontraron tokens volátiles viables');
