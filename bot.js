@@ -106,60 +106,47 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.raydium.io/v2/main/pairs', { responseType: 'stream' });
+        const response = await axios.get('https://api.raydium.io/v2/main/pairs');
+        const pairs = response.data || [];
+        console.log('Respuesta Raydium:', pairs.length, 'pares encontrados');
+
         const volatilePairs = [];
-        let buffer = '';
+        const maxPairsToProcess = 100; // Reducimos drásticamente para Render Free
 
-        response.data.on('data', (chunk) => {
-            buffer += chunk.toString();
-            let boundary;
-            while ((boundary = buffer.indexOf('},')) !== -1) {
-                const pairStr = buffer.slice(0, boundary + 1);
-                buffer = buffer.slice(boundary + 2);
-                try {
-                    const pair = JSON.parse(pairStr + '}'); // Completar el objeto
-                    const baseMint = pair.base_token;
-                    const quoteMint = pair.quote_token;
-                    if (quoteMint !== USDT_MINT) continue;
+        for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
+            const pair = pairs[i];
+            const baseMint = pair.base_token;
+            const quoteMint = pair.quote_token;
+            if (quoteMint !== USDT_MINT) continue;
 
-                    const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0;
-                    const liquidity = pair.liquidity || 0;
-                    const price = pair.price || 0;
-                    const fdv = pair.fdv || (pair.total_supply * price);
+            const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0;
+            const liquidity = pair.liquidity || 0;
+            const price = pair.price || 0;
+            const fdv = pair.fdv || (pair.total_supply * price);
 
-                    if (
-                        volumeH1 >= MIN_VOLUME &&
-                        fdv >= MIN_MARKET_CAP &&
-                        liquidity >= MIN_LIQUIDITY &&
-                        fdv && (volumeH1 / fdv) >= MIN_VOLUME_TO_MC_RATIO
-                    ) {
-                        volatilePairs.push({
-                            address: baseMint,
-                            symbol: pair.name.split('/')[0] || 'UNKNOWN',
-                            liquidity
-                        });
-                    }
-
-                    // Limitar a 5 tokens para reducir memoria
-                    if (volatilePairs.length > 5) {
-                        volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
-                        volatilePairs.pop();
-                    }
-                } catch (e) {
-                    console.log('Error parseando par:', e.message);
-                }
+            if (
+                volumeH1 >= MIN_VOLUME &&
+                fdv >= MIN_MARKET_CAP &&
+                liquidity >= MIN_LIQUIDITY &&
+                fdv && (volumeH1 / fdv) >= MIN_VOLUME_TO_MC_RATIO
+            ) {
+                volatilePairs.push({
+                    address: baseMint,
+                    symbol: pair.name.split('/')[0] || 'UNKNOWN',
+                    liquidity
+                });
             }
-        });
 
-        await new Promise((resolve, reject) => {
-            response.data.on('end', () => {
+            // Mantener solo los 5 mejores por liquidez
+            if (volatilePairs.length > 5) {
                 volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
-                volatileTokens = volatilePairs.map(t => t.address);
-                console.log('Lista actualizada:', volatileTokens);
-                resolve();
-            });
-            response.data.on('error', reject);
-        });
+                volatilePairs.pop();
+            }
+        }
+
+        volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
+        volatileTokens = volatilePairs.map(t => t.address);
+        console.log('Lista actualizada:', volatileTokens);
 
         if (volatileTokens.length === 0) {
             console.log('No se encontraron tokens volátiles viables');
