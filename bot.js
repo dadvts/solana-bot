@@ -106,22 +106,21 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.raydium.io/v2/amm/pools');
-        const pools = response.data.data || [];
-        console.log('Respuesta Raydium:', pools.length, 'pools encontrados');
+        const response = await axios.get('https://api.raydium.io/v2/main/pairs');
+        const pairs = response.data || [];
+        console.log('Respuesta Raydium:', pairs.length, 'pares encontrados');
 
-        const allPairs = pools.map(pool => {
-            const baseMint = pool.baseMint;
-            const quoteMint = pool.quoteMint;
-            const volumeH1 = pool.volume24hQuote ? pool.volume24hQuote / 24 : 0; // Aproximación 1h
-            const liquidity = pool.tvl || 0;
-            const baseSupply = pool.baseReserve / (10 ** pool.baseDecimals);
-            const price = (pool.quoteReserve / (10 ** pool.quoteDecimals)) / baseSupply;
-            const fdv = baseSupply * price;
+        const allPairs = pairs.map(pair => {
+            const baseMint = pair.base_token;
+            const quoteMint = pair.quote_token;
+            const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0; // Aproximación 1h
+            const liquidity = pair.liquidity || 0;
+            const price = pair.price || 0;
+            const fdv = pair.fdv || (pair.total_supply * price);
 
             return {
                 address: baseMint,
-                symbol: pool.baseSymbol || 'UNKNOWN',
+                symbol: pair.name.split('/')[0] || 'UNKNOWN',
                 volumeH1,
                 fdv,
                 liquidity,
