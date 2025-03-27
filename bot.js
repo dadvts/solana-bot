@@ -13,19 +13,19 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.01; // 0.01 SOL mínimo por trade
+const MIN_TRADE_AMOUNT_SOL = 0.01;
 const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
-const CYCLE_INTERVAL = 30000; // 30 segundos
-const UPDATE_INTERVAL = 180000; // 3 min
+const CYCLE_INTERVAL = 30000;
+const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 100000; // 100k USD
 const MAX_MARKET_CAP = 500000000; // 500M USD
-const MIN_VOLUME = 100000; // 100k USD (24h)
+const MIN_VOLUME = 50000; // Reducido a 50k para más opciones
 const MIN_LIQUIDITY = 10000; // 10k USD
 const INITIAL_TAKE_PROFIT = 1.25; // 25%
-const SCALE_SELL_PORTION = 0.25; // 25% por escalón
-const TARGET_INITIAL_SOL = 1; // 1 SOL como objetivo inicial
-const MAX_AGE_DAYS = 7; // Tokens < 7 días
+const SCALE_SELL_PORTION = 0.25; // 25%
+const TARGET_INITIAL_SOL = 1; // 1 SOL
+const MAX_AGE_DAYS = 7;
 
 let portfolio = {};
 let volatileTokens = [];
@@ -65,28 +65,32 @@ async function getTokenBalance(tokenMint) {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles (inspirado en https://dexscreener.com/solana?rankBy=trendingScoreH1&order=desc)...');
     try {
-        const response = await axios.get('https://public-api.birdeye.so/public/tokenlist?sort_by=v24hUSD&sort_type=desc', {
-            headers: { 'X-API-KEY': 'your_birdeye_api_key_if_needed' } // Gratuita por ahora, no requiere key
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112', {
+            headers: { 'Accept': 'application/json' }
         });
-        const tokens = response.data.data.tokens || [];
-        console.log('Respuesta Birdeye:', tokens.length, 'tokens encontrados');
+        const pairs = response.data.pairs || [];
+        console.log('Respuesta DexScreener:', pairs.length, 'pares encontrados');
 
         const volatilePairs = [];
-        const maxTokensToProcess = 100;
+        const maxPairsToProcess = 100;
 
-        for (let i = 0; i < Math.min(tokens.length, maxTokensToProcess); i++) {
-            const token = tokens[i];
-            if (token.address === SOL_MINT) {
-                console.log(`Ignorado: ${token.symbol} (es SOL)`);
+        for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
+            const pair = pairs[i];
+            if (
+                pair.chainId !== 'solana' || 
+                pair.quoteToken.address !== SOL_MINT || // SOL como quote token
+                pair.baseToken.address === SOL_MINT
+            ) {
+                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/*/SOL)`);
                 continue;
             }
 
-            const mc = token.mc || 0;
-            const volume24h = token.v24hUSD || 0;
-            const liquidity = token.liquidity || 0;
-            const ageInDays = token.lastTradeUnixTime ? (Date.now() / 1000 - token.lastTradeUnixTime) / (60 * 60 * 24) : 0;
+            const mc = pair.fdv || 0;
+            const volume24h = pair.volume.h24 || 0;
+            const liquidity = pair.liquidity.usd || 0;
+            const ageInDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : 0;
 
-            console.log(`Token ${token.symbol} | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
+            console.log(`Par ${pair.baseToken.symbol}/SOL | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
 
             if (
                 mc >= MIN_MARKET_CAP &&
@@ -98,22 +102,22 @@ async function updateVolatileTokens() {
                 try {
                     await jupiterApi.quoteGet({
                         inputMint: SOL_MINT,
-                        outputMint: token.address,
+                        outputMint: pair.baseToken.address,
                         amount: Math.floor(0.1 * LAMPORTS_PER_SOL),
                         slippageBps: 1200
                     });
                     volatilePairs.push({
-                        address: token.address,
-                        symbol: token.symbol || 'UNKNOWN',
+                        address: pair.baseToken.address,
+                        symbol: pair.baseToken.symbol || 'UNKNOWN',
                         liquidity,
                         volume24h
                     });
-                    console.log(`Token viable: ${token.symbol} (${token.address})`);
+                    console.log(`Token viable: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
                 } catch (error) {
-                    console.log(`Rechazado: ${token.symbol} (sin ruta a SOL)`);
+                    console.log(`Rechazado: ${pair.baseToken.symbol} (sin ruta a SOL)`);
                 }
             } else {
-                console.log(`Rechazado: ${token.symbol} no cumple criterios`);
+                console.log(`Rechazado: ${pair.baseToken.symbol} no cumple criterios`);
             }
 
             if (volatilePairs.length > 5) {
@@ -131,7 +135,7 @@ async function updateVolatileTokens() {
             volatileTokens = [];
         }
     } catch (error) {
-        console.log('Error Birdeye:', error.message);
+        console.log('Error DexScreener:', error.message);
         volatileTokens = [];
     }
 }
