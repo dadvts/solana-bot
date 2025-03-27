@@ -18,13 +18,13 @@ const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 30000;
 const UPDATE_INTERVAL = 180000;
-const MIN_MARKET_CAP = 100000; // 100k USD
-const MAX_MARKET_CAP = 500000000; // 500M USD
-const MIN_VOLUME = 25000; // Reducido a 25k para más opciones
-const MIN_LIQUIDITY = 5000; // Reducido a 5k
-const INITIAL_TAKE_PROFIT = 1.25; // 25%
-const SCALE_SELL_PORTION = 0.25; // 25%
-const TARGET_INITIAL_SOL = 1; // 1 SOL
+const MIN_MARKET_CAP = 100000;
+const MAX_MARKET_CAP = 500000000;
+const MIN_VOLUME = 25000;
+const MIN_LIQUIDITY = 5000;
+const INITIAL_TAKE_PROFIT = 1.25;
+const SCALE_SELL_PORTION = 0.25;
+const TARGET_INITIAL_SOL = 1;
 const MAX_AGE_DAYS = 7;
 
 let portfolio = {};
@@ -36,7 +36,6 @@ async function getTokenDecimals(mintPubKey) {
         const mint = await getMint(connection, new PublicKey(mintPubKey));
         return mint.decimals;
     } catch (error) {
-        console.log(`Error obteniendo decimales de ${mintPubKey}: ${error.message}`);
         return 6;
     }
 }
@@ -63,7 +62,7 @@ async function getTokenBalance(tokenMint) {
 }
 
 async function updateVolatileTokens() {
-    console.log('Actualizando tokens volátiles (inspirado en https://dexscreener.com/solana?rankBy=trendingScoreH1&order=desc)...');
+    console.log('Actualizando tokens volátiles...');
     try {
         const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=raydium', {
             headers: { 'Accept': 'application/json' }
@@ -78,10 +77,9 @@ async function updateVolatileTokens() {
             const pair = pairs[i];
             if (
                 pair.chainId !== 'solana' || 
-                pair.quoteToken.address !== SOL_MINT || // SOL como quote token
+                pair.quoteToken.address !== SOL_MINT || 
                 pair.baseToken.address === SOL_MINT
             ) {
-                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/*/SOL)`);
                 continue;
             }
 
@@ -89,8 +87,6 @@ async function updateVolatileTokens() {
             const volume24h = pair.volume.h24 || 0;
             const liquidity = pair.liquidity.usd || 0;
             const ageInDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : 0;
-
-            console.log(`Par ${pair.baseToken.symbol}/SOL | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
 
             if (
                 mc >= MIN_MARKET_CAP &&
@@ -112,28 +108,14 @@ async function updateVolatileTokens() {
                         liquidity,
                         volume24h
                     });
-                    console.log(`Token viable: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
-                } catch (error) {
-                    console.log(`Rechazado: ${pair.baseToken.symbol} (sin ruta a SOL)`);
-                }
-            } else {
-                console.log(`Rechazado: ${pair.baseToken.symbol} no cumple criterios`);
-            }
-
-            if (volatilePairs.length > 5) {
-                volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
-                volatilePairs.pop();
+                } catch (error) {}
             }
         }
 
         volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
-        volatileTokens = volatilePairs.map(t => t.address);
+        volatileTokens = volatilePairs.slice(0, 5).map(t => t.address);
         console.log('Lista actualizada:', volatileTokens);
-
-        if (volatileTokens.length === 0) {
-            console.log('No se encontraron tokens volátiles viables');
-            volatileTokens = [];
-        }
+        if (volatileTokens.length === 0) console.log('No se encontraron tokens viables');
     } catch (error) {
         console.log('Error DexScreener:', error.message);
         volatileTokens = [];
@@ -165,7 +147,6 @@ async function selectBestToken() {
             console.log(`Error evaluando ${tokenMint}: ${error.message}`);
         }
     }
-    if (bestToken) console.log(`Mejor token: ${bestToken.token.toBase58()}`);
     return bestToken;
 }
 
@@ -193,7 +174,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
             headers: { 'Content-Type': 'application/json' }
         });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base58'));
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         const confirmation = await connection.confirmTransaction(txid, 'confirmed');
@@ -216,16 +197,12 @@ async function buyToken(tokenPubKey, amountPerTrade) {
 
 async function sellToken(tokenPubKey, portion = 1) {
     const tokenMint = tokenPubKey.toBase58();
-    if (!portfolio[tokenMint]) {
-        console.log(`Token ${tokenMint} no está en el portfolio`);
-        return 0;
-    }
+    if (!portfolio[tokenMint]) return 0;
     const { buyPrice, amount, decimals, initialSold, investedSol } = portfolio[tokenMint];
     const realBalance = await getTokenBalance(tokenMint);
 
     if (realBalance === 0) {
         delete portfolio[tokenMint];
-        console.log(`No hay ${tokenMint} para vender`);
         return 0;
     }
 
@@ -251,7 +228,7 @@ async function sellToken(tokenPubKey, portion = 1) {
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
             headers: { 'Content-Type': 'application/json' }
         });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base58'));
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         const confirmation = await connection.confirmTransaction(txid, 'confirmed');
@@ -273,7 +250,6 @@ async function sellToken(tokenPubKey, portion = 1) {
                 const reinvest = profit > 0 ? profit * 0.5 : 0;
                 tradingCapitalSol += reinvest;
                 savedSol += (solReceived - reinvest);
-                console.log(`Reinversión: ${reinvest} SOL | Guardado: ${savedSol} SOL`);
             }
             return solReceived;
         }
@@ -294,7 +270,6 @@ async function getTokenPrice(tokenMint) {
         });
         return quote.outAmount / LAMPORTS_PER_SOL;
     } catch (error) {
-        console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
         return null;
     }
 }
@@ -303,10 +278,7 @@ async function syncPortfolio() {
     const existingTokens = Object.keys(portfolio);
     for (const token of existingTokens) {
         const balance = await getTokenBalance(token);
-        if (balance === 0) {
-            delete portfolio[token];
-            console.log(`Eliminado ${token} de portfolio (saldo 0)`);
-        }
+        if (balance === 0) delete portfolio[token];
     }
 }
 
@@ -319,7 +291,6 @@ async function tradingBot() {
     await syncPortfolio();
 
     if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
-        console.log('Umbral crítico SOL: vendiendo todo...');
         for (const token in portfolio) await sellToken(new PublicKey(token));
         return;
     }
@@ -329,8 +300,6 @@ async function tradingBot() {
             const bestToken = await selectBestToken();
             if (bestToken) await buyToken(bestToken.token, tradingCapitalSol);
             else console.log('No se encontraron tokens viables para comprar');
-        } else {
-            console.log('Esperando capital suficiente o tokens en portfolio...');
         }
     } else {
         for (const token in portfolio) {
@@ -340,30 +309,22 @@ async function tradingBot() {
             const { buyPrice, lastPrice, initialSold, investedSol } = portfolio[token];
             const growth = currentPrice / buyPrice;
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
-            const growthPercent = (growth - 1) * 100;
-
-            console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice} | Crecimiento: ${growthPercent.toFixed(2)}%`);
 
             if (growth <= 1) {
-                console.log(`Stop-loss: ${currentPrice} <= ${buyPrice}`);
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
-                console.log(`Recuperando capital (${INITIAL_TAKE_PROFIT * 100 - 100}%): ${growthPercent.toFixed(2)}%`);
                 const portionToRecover = Math.min(1, investedSol / (currentPrice * portfolio[token].amount));
                 await sellToken(new PublicKey(token), portionToRecover);
             } else if (initialSold && growth >= 1.5 && growthVsLast > 0) {
-                console.log(`Escalando ganancias (x1.5): ${growthPercent.toFixed(2)}%`);
                 await sellToken(new PublicKey(token), SCALE_SELL_PORTION);
             } else if (initialSold && (growthVsLast <= 0 || growth < 1.25)) {
-                console.log(`Saliendo: ${growthPercent.toFixed(2)}% (estabilizado o < 25%)`);
                 await sellToken(new PublicKey(token));
             } else {
-                console.log(`Esperando: Crecimiento ${growthPercent.toFixed(2)}%`);
                 portfolio[token].lastPrice = currentPrice;
             }
         }
     }
-    console.log('Ciclo completado. Esperando próximo ciclo en 30 segundos...');
+    console.log('Ciclo completado.');
 }
 
 async function startBot() {
