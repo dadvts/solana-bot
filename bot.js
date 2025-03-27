@@ -17,15 +17,15 @@ let savedUsdt = 0;
 const MIN_TRADE_AMOUNT_USDT = 0.1;
 const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
-const CYCLE_INTERVAL = 30000; // 30 segundos para operativa frecuente
+const CYCLE_INTERVAL = 30000; // 30 segundos
 const UPDATE_INTERVAL = 180000; // 3 min
 const MIN_MARKET_CAP = 500000; // 0.5M USD
 const MAX_MARKET_CAP = 100000000; // 100M USD
 const MIN_VOLUME = 500000; // 500k USD (24h)
 const MIN_VOLUME_TO_MC_RATIO = 1; // Volumen/MC > 1
 const MIN_LIQUIDITY = 10000; // 10k USD
-const INITIAL_TAKE_PROFIT = 1.25; // 25% para recuperar capital rápidamente
-const SCALE_SELL_PORTION = 0.25; // Vender 25% en cada escalón
+const INITIAL_TAKE_PROFIT = 1.25; // 25%
+const SCALE_SELL_PORTION = 0.25; // 25% por escalón
 const TARGET_INITIAL_USDT = 180; // ~1 SOL
 
 let portfolio = {};
@@ -104,14 +104,14 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT', {
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/pairs/solana', {
             headers: { 'Accept': 'application/json' }
         });
         const pairs = response.data.pairs || [];
         console.log('Respuesta DexScreener:', pairs.length, 'pares encontrados');
 
         const volatilePairs = [];
-        const maxPairsToProcess = 50;
+        const maxPairsToProcess = 100;
 
         for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
             const pair = pairs[i];
@@ -120,7 +120,9 @@ async function updateVolatileTokens() {
             const mc = pair.fdv || 0;
             const volume24h = pair.volume.h24 || 0;
             const liquidity = pair.liquidity.usd || 0;
-            const ageInDays = (Date.now() - new Date(pair.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+            const ageInDays = pair.createdAt ? (Date.now() - new Date(pair.createdAt).getTime()) / (1000 * 60 * 60 * 24) : Infinity;
+
+            console.log(`Par ${pair.baseToken.symbol}/USDT | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
 
             if (
                 mc >= MIN_MARKET_CAP &&
@@ -134,6 +136,9 @@ async function updateVolatileTokens() {
                     symbol: pair.baseToken.symbol || 'UNKNOWN',
                     liquidity
                 });
+                console.log(`Token viable: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
+            } else {
+                console.log(`Rechazado: ${pair.baseToken.symbol} no cumple criterios`);
             }
 
             if (volatilePairs.length > 5) {
@@ -201,7 +206,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             slippageBps: 1200
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
-        const buyPrice = tradeAmount / tokenAmount; // Precio en USDT por token
+        const buyPrice = tradeAmount / tokenAmount;
 
         const swapRequest = {
             quoteResponse: quote,
@@ -307,10 +312,10 @@ async function getTokenPrice(tokenMint) {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
             outputMint: USDT_MINT,
-            amount: 10 ** decimals, // 1 token
+            amount: 10 ** decimals,
             slippageBps: 1200
         });
-        return quote.outAmount / (10 ** 6); // Precio en USDT por token
+        return quote.outAmount / (10 ** 6);
     } catch (error) {
         console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
         return null;
