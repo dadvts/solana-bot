@@ -9,9 +9,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
-const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-const EXCLUDED_TOKEN = 'Dn4noZ5jgGfkntzcQSUZ8czkreiZ1ForXYoV2H8Dm7S1';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
@@ -23,7 +21,6 @@ const UPDATE_INTERVAL = 180000; // 3 min
 const MIN_MARKET_CAP = 100000; // 100k USD
 const MAX_MARKET_CAP = 500000000; // 500M USD
 const MIN_VOLUME = 100000; // 100k USD (24h)
-const MIN_VOLUME_TO_MC_RATIO = 1; // Volumen/MC > 1
 const MIN_LIQUIDITY = 10000; // 10k USD
 const INITIAL_TAKE_PROFIT = 1.25; // 25%
 const SCALE_SELL_PORTION = 0.25; // 25% por escalón
@@ -65,96 +62,58 @@ async function getTokenBalance(tokenMint) {
     }
 }
 
-async function convertUsdtToSol() {
-    const usdtBalance = await getTokenBalance(USDT_MINT);
-    if (usdtBalance > 0) {
-        console.log(`Convirtiendo ${usdtBalance} USDT a SOL...`);
-        try {
-            const quote = await jupiterApi.quoteGet({
-                inputMint: USDT_MINT,
-                outputMint: SOL_MINT,
-                amount: Math.floor(usdtBalance * (10 ** 6)),
-                slippageBps: 500
-            });
-            const swapRequest = {
-                quoteResponse: quote,
-                userPublicKey: walletPubKey.toBase58(),
-                wrapAndUnwrapSol: true
-            };
-            const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
-                headers: { 'Content-Type': 'application/json' }
-            });
-            const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
-            transaction.sign([keypair]);
-            const txid = await connection.sendRawTransaction(transaction.serialize());
-            const confirmation = await connection.confirmTransaction(txid, 'confirmed');
-            if (!confirmation.value.err) {
-                console.log(`USDT convertido a SOL: ${txid} | Nuevo saldo SOL: ${await getWalletBalanceSol()}`);
-            }
-        } catch (error) {
-            console.log(`Error convirtiendo USDT a SOL: ${error.message}`);
-        }
-    }
-}
-
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles (inspirado en https://dexscreener.com/solana?rankBy=trendingScoreH1&order=desc)...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL', {
-            headers: { 'Accept': 'application/json' }
+        const response = await axios.get('https://public-api.birdeye.so/public/tokenlist?sort_by=v24hUSD&sort_type=desc', {
+            headers: { 'X-API-KEY': 'your_birdeye_api_key_if_needed' } // Gratuita por ahora, no requiere key
         });
-        const pairs = response.data.pairs || [];
-        console.log('Respuesta DexScreener:', pairs.length, 'pares encontrados');
+        const tokens = response.data.data.tokens || [];
+        console.log('Respuesta Birdeye:', tokens.length, 'tokens encontrados');
 
         const volatilePairs = [];
-        const maxPairsToProcess = 100;
+        const maxTokensToProcess = 100;
 
-        for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
-            const pair = pairs[i];
-            if (
-                pair.chainId !== 'solana' || 
-                pair.quoteToken.address !== SOL_MINT || // SOL como quote token
-                pair.baseToken.address === SOL_MINT || 
-                pair.baseToken.address === USDT_MINT || 
-                pair.baseToken.address === EXCLUDED_TOKEN
-            ) {
-                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/*/SOL o es SOL/USDT)`);
+        for (let i = 0; i < Math.min(tokens.length, maxTokensToProcess); i++) {
+            const token = tokens[i];
+            if (token.address === SOL_MINT) {
+                console.log(`Ignorado: ${token.symbol} (es SOL)`);
                 continue;
             }
 
-            const mc = pair.fdv || 0;
-            const volume24h = pair.volume.h24 || 0;
-            const liquidity = pair.liquidity.usd || 0;
-            const ageInDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : 0;
+            const mc = token.mc || 0;
+            const volume24h = token.v24hUSD || 0;
+            const liquidity = token.liquidity || 0;
+            const ageInDays = token.lastTradeUnixTime ? (Date.now() / 1000 - token.lastTradeUnixTime) / (60 * 60 * 24) : 0;
 
-            console.log(`Par ${pair.baseToken.symbol}/SOL | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
+            console.log(`Token ${token.symbol} | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
 
             if (
                 mc >= MIN_MARKET_CAP &&
                 mc <= MAX_MARKET_CAP &&
-                (volume24h >= MIN_VOLUME || (mc > 0 && volume24h / mc >= MIN_VOLUME_TO_MC_RATIO)) &&
+                volume24h >= MIN_VOLUME &&
                 liquidity >= MIN_LIQUIDITY &&
                 ageInDays <= MAX_AGE_DAYS
             ) {
                 try {
                     await jupiterApi.quoteGet({
                         inputMint: SOL_MINT,
-                        outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.1 * LAMPORTS_PER_SOL), // 0.1 SOL para verificar ruta
+                        outputMint: token.address,
+                        amount: Math.floor(0.1 * LAMPORTS_PER_SOL),
                         slippageBps: 1200
                     });
                     volatilePairs.push({
-                        address: pair.baseToken.address,
-                        symbol: pair.baseToken.symbol || 'UNKNOWN',
+                        address: token.address,
+                        symbol: token.symbol || 'UNKNOWN',
                         liquidity,
                         volume24h
                     });
-                    console.log(`Token viable: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
+                    console.log(`Token viable: ${token.symbol} (${token.address})`);
                 } catch (error) {
-                    console.log(`Rechazado: ${pair.baseToken.symbol} (sin ruta a SOL)`);
+                    console.log(`Rechazado: ${token.symbol} (sin ruta a SOL)`);
                 }
             } else {
-                console.log(`Rechazado: ${pair.baseToken.symbol} no cumple criterios`);
+                console.log(`Rechazado: ${token.symbol} no cumple criterios`);
             }
 
             if (volatilePairs.length > 5) {
@@ -172,7 +131,7 @@ async function updateVolatileTokens() {
             volatileTokens = [];
         }
     } catch (error) {
-        console.log('Error DexScreener:', error.message);
+        console.log('Error Birdeye:', error.message);
         volatileTokens = [];
     }
 }
@@ -183,7 +142,7 @@ async function selectBestToken() {
     const availableCapital = tradingCapitalSol;
 
     for (const tokenMint of volatileTokens) {
-        if (tokenMint === USDT_MINT || tokenMint === EXCLUDED_TOKEN || tokenMint === lastSoldToken) continue;
+        if (tokenMint === SOL_MINT || tokenMint === lastSoldToken) continue;
         try {
             const decimals = await getTokenDecimals(tokenMint);
             const quote = await jupiterApi.quoteGet({
@@ -407,10 +366,6 @@ async function startBot() {
     const solBalance = await getWalletBalanceSol();
     tradingCapitalSol = solBalance;
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
-    
-    // Convertir USDT a SOL al inicio (ejecutar solo una vez)
-    await convertUsdtToSol();
-    tradingCapitalSol = await getWalletBalanceSol(); // Actualizar capital tras conversión
 
     await updateVolatileTokens();
     await tradingBot();
