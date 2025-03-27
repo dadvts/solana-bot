@@ -291,6 +291,7 @@ async function tradingBot() {
     await syncPortfolio();
 
     if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
+        console.log('Umbral crítico SOL: vendiendo todo...');
         for (const token in portfolio) await sellToken(new PublicKey(token));
         return;
     }
@@ -300,6 +301,8 @@ async function tradingBot() {
             const bestToken = await selectBestToken();
             if (bestToken) await buyToken(bestToken.token, tradingCapitalSol);
             else console.log('No se encontraron tokens viables para comprar');
+        } else {
+            console.log('Capital insuficiente para comprar más');
         }
     } else {
         for (const token in portfolio) {
@@ -309,15 +312,22 @@ async function tradingBot() {
             const { buyPrice, lastPrice, initialSold, investedSol } = portfolio[token];
             const growth = currentPrice / buyPrice;
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
+            const growthPercent = (growth - 1) * 100;
+
+            console.log(`${token}: Precio actual: ${currentPrice} SOL | Compra: ${buyPrice} SOL | Crecimiento: ${growthPercent.toFixed(2)}%`);
 
             if (growth <= 1) {
+                console.log(`Stop-loss activado para ${token}`);
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
+                console.log(`Take-profit inicial (${INITIAL_TAKE_PROFIT * 100 - 100}%) para ${token}`);
                 const portionToRecover = Math.min(1, investedSol / (currentPrice * portfolio[token].amount));
                 await sellToken(new PublicKey(token), portionToRecover);
             } else if (initialSold && growth >= 1.5 && growthVsLast > 0) {
+                console.log(`Escalando ganancias (x1.5) para ${token}`);
                 await sellToken(new PublicKey(token), SCALE_SELL_PORTION);
             } else if (initialSold && (growthVsLast <= 0 || growth < 1.25)) {
+                console.log(`Saliendo de ${token}: crecimiento estabilizado o < 25%`);
                 await sellToken(new PublicKey(token));
             } else {
                 portfolio[token].lastPrice = currentPrice;
@@ -331,6 +341,20 @@ async function startBot() {
     const solBalance = await getWalletBalanceSol();
     tradingCapitalSol = solBalance;
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
+
+    // Inicializar portfolio con BabyGhibli si ya está comprado
+    const babyGhibliBalance = await getTokenBalance('Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ');
+    if (babyGhibliBalance > 0) {
+        portfolio['Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ'] = {
+            buyPrice: 0.000002323, // Precio estimado de la compra previa
+            amount: babyGhibliBalance,
+            lastPrice: 0.000002323,
+            decimals: 6,
+            initialSold: false,
+            investedSol: 0.158
+        };
+        console.log(`Portfolio inicializado con ${babyGhibliBalance} BabyGhibli`);
+    }
 
     await updateVolatileTokens();
     await tradingBot();
