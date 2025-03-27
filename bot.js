@@ -17,16 +17,16 @@ let savedUsdt = 0;
 const MIN_TRADE_AMOUNT_USDT = 0.1;
 const FEE_RESERVE_SOL = 0.01;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
-const CYCLE_INTERVAL = 60000; // 1 min
+const CYCLE_INTERVAL = 30000; // 30 segundos para operativa frecuente
 const UPDATE_INTERVAL = 180000; // 3 min
-const MIN_MARKET_CAP = 1000000; // 1M USD
-const MIN_VOLUME = 200000; // 200K USD (1h)
-const MIN_VOLUME_TO_MC_RATIO = 0.2;
-const MIN_LIQUIDITY = 10000; // 10K USD
-const INITIAL_TAKE_PROFIT = 1.3; // 30%
-const MOONBAG_PORTION = 0.5;
-const MAX_PRICE_IMPACT = 0.1;
-const TARGET_INITIAL_USDT = 130;
+const MIN_MARKET_CAP = 500000; // 0.5M USD
+const MAX_MARKET_CAP = 100000000; // 100M USD
+const MIN_VOLUME = 500000; // 500k USD (24h)
+const MIN_VOLUME_TO_MC_RATIO = 1; // Volumen/MC > 1
+const MIN_LIQUIDITY = 10000; // 10k USD
+const INITIAL_TAKE_PROFIT = 1.25; // 25% para recuperar capital rápidamente
+const SCALE_SELL_PORTION = 0.25; // Vender 25% en cada escalón
+const TARGET_INITIAL_USDT = 180; // ~1 SOL
 
 let portfolio = {};
 let volatileTokens = [];
@@ -94,8 +94,6 @@ async function ensureSolForFees() {
             if (!confirmation.value.err) {
                 tradingCapitalUsdt -= amountToSwap;
                 console.log(`SOL comprado: ${txid} | Nuevo saldo SOL: ${await getWalletBalanceSol()}`);
-            } else {
-                console.log(`Fallo al comprar SOL: ${txid}`);
             }
         } catch (error) {
             console.log(`Error comprando SOL: ${error.message}`);
@@ -106,79 +104,54 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.raydium.io/v2/main/pairs', { responseType: 'stream' });
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT', {
+            headers: { 'Accept': 'application/json' }
+        });
+        const pairs = response.data.pairs || [];
+        console.log('Respuesta DexScreener:', pairs.length, 'pares encontrados');
+
         const volatilePairs = [];
-        let buffer = '';
-        let processedPairs = 0;
-        const maxPairsToProcess = 50; // Reducimos aún más para Render Free
+        const maxPairsToProcess = 50;
 
-        response.data.on('data', (chunk) => {
-            buffer += chunk.toString();
-            let start = 0;
+        for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
+            const pair = pairs[i];
+            if (pair.chainId !== 'solana' || pair.quoteToken.address !== USDT_MINT) continue;
 
-            while (processedPairs < maxPairsToProcess) {
-                const openBracket = buffer.indexOf('{', start);
-                if (openBracket === -1) break;
+            const mc = pair.fdv || 0;
+            const volume24h = pair.volume.h24 || 0;
+            const liquidity = pair.liquidity.usd || 0;
+            const ageInDays = (Date.now() - new Date(pair.createdAt).getTime()) / (1000 * 60 * 60 * 24);
 
-                const closeBracket = buffer.indexOf('}', openBracket);
-                if (closeBracket === -1) break;
-
-                const pairStr = buffer.slice(openBracket, closeBracket + 1);
-                start = closeBracket + 1;
-
-                try {
-                    const pair = JSON.parse(pairStr);
-                    const baseMint = pair.base_token;
-                    const quoteMint = pair.quote_token;
-                    if (quoteMint !== USDT_MINT) continue;
-
-                    const volumeH1 = pair.volume_24h ? pair.volume_24h / 24 : 0;
-                    const liquidity = pair.liquidity || 0;
-                    const price = pair.price || 0;
-                    const fdv = pair.fdv || (pair.total_supply * price);
-
-                    if (
-                        volumeH1 >= MIN_VOLUME &&
-                        fdv >= MIN_MARKET_CAP &&
-                        liquidity >= MIN_LIQUIDITY &&
-                        fdv && (volumeH1 / fdv) >= MIN_VOLUME_TO_MC_RATIO
-                    ) {
-                        volatilePairs.push({
-                            address: baseMint,
-                            symbol: pair.name.split('/')[0] || 'UNKNOWN',
-                            liquidity
-                        });
-                    }
-
-                    processedPairs++;
-                    if (volatilePairs.length > 5) {
-                        volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
-                        volatilePairs.pop();
-                    }
-                } catch (e) {
-                    console.log('Error parseando par:', e.message);
-                }
+            if (
+                mc >= MIN_MARKET_CAP &&
+                mc <= MAX_MARKET_CAP &&
+                (volume24h >= MIN_VOLUME || (mc > 0 && volume24h / mc >= MIN_VOLUME_TO_MC_RATIO)) &&
+                liquidity >= MIN_LIQUIDITY &&
+                ageInDays <= 30
+            ) {
+                volatilePairs.push({
+                    address: pair.baseToken.address,
+                    symbol: pair.baseToken.symbol || 'UNKNOWN',
+                    liquidity
+                });
             }
-        });
 
-        await new Promise((resolve, reject) => {
-            response.data.on('end', () => {
+            if (volatilePairs.length > 5) {
                 volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
-                volatileTokens = volatilePairs.map(t => t.address);
-                console.log('Lista actualizada:', volatileTokens);
-                if (volatileTokens.length === 0) {
-                    console.log('No se encontraron tokens volátiles viables');
-                    volatileTokens = [];
-                }
-                resolve();
-            });
-            response.data.on('error', (err) => {
-                console.log('Error en stream:', err.message);
-                reject(err);
-            });
-        });
+                volatilePairs.pop();
+            }
+        }
+
+        volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
+        volatileTokens = volatilePairs.map(t => t.address);
+        console.log('Lista actualizada:', volatileTokens);
+
+        if (volatileTokens.length === 0) {
+            console.log('No se encontraron tokens volátiles viables');
+            volatileTokens = [];
+        }
     } catch (error) {
-        console.log('Error Raydium:', error.message);
+        console.log('Error DexScreener:', error.message);
         volatileTokens = [];
     }
 }
@@ -228,6 +201,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             slippageBps: 1200
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
+        const buyPrice = tradeAmount / tokenAmount; // Precio en USDT por token
 
         const swapRequest = {
             quoteResponse: quote,
@@ -243,16 +217,15 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const confirmation = await connection.confirmTransaction(txid, 'confirmed');
         if (!confirmation.value.err) {
             portfolio[tokenPubKey.toBase58()] = {
-                buyPrice: tradeAmount / tokenAmount,
+                buyPrice,
                 amount: tokenAmount,
-                lastPrice: tradeAmount / tokenAmount,
+                lastPrice: buyPrice,
                 decimals,
-                initialSold: false
+                initialSold: false,
+                investedUsdt: tradeAmount
             };
             tradingCapitalUsdt -= tradeAmount;
-            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Capital: ${tradingCapitalUsdt} USDT`);
-        } else {
-            console.log(`Fallo al comprar ${tokenPubKey.toBase58()}: ${txid}`);
+            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Precio: ${buyPrice} USDT | Capital: ${tradingCapitalUsdt} USDT`);
         }
     } catch (error) {
         console.log(`Error compra ${tokenPubKey.toBase58()}: ${error.message}`);
@@ -265,7 +238,7 @@ async function sellToken(tokenPubKey, portion = 1) {
         console.log(`Token ${tokenMint} no está en el portfolio`);
         return 0;
     }
-    const { buyPrice, amount, decimals, initialSold } = portfolio[tokenMint];
+    const { buyPrice, amount, decimals, initialSold, investedUsdt } = portfolio[tokenMint];
     const realBalance = await getTokenBalance(tokenMint);
 
     if (realBalance === 0) {
@@ -310,19 +283,17 @@ async function sellToken(tokenPubKey, portion = 1) {
             } else if (portion < 1) {
                 portfolio[tokenMint].initialSold = true;
             }
+
             if (tradingCapitalUsdt + savedUsdt < TARGET_INITIAL_USDT) {
                 tradingCapitalUsdt += usdtReceived;
             } else {
                 const profit = usdtReceived - (sellAmount * buyPrice);
-                const reinvest = profit * 0.5;
-                tradingCapitalUsdt = Math.max(TARGET_INITIAL_USDT, tradingCapitalUsdt + reinvest);
+                const reinvest = profit > 0 ? profit * 0.5 : 0;
+                tradingCapitalUsdt += reinvest;
                 savedUsdt += (usdtReceived - reinvest);
                 console.log(`Reinversión: ${reinvest} USDT | Guardado: ${savedUsdt} USDT`);
             }
             return usdtReceived;
-        } else {
-            console.log(`Fallo al vender ${tokenMint}: ${txid}`);
-            return 0;
         }
     } catch (error) {
         console.log(`Error vendiendo ${tokenMint}: ${error.message}`);
@@ -336,11 +307,10 @@ async function getTokenPrice(tokenMint) {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
             outputMint: USDT_MINT,
-            amount: 10 ** decimals,
+            amount: 10 ** decimals, // 1 token
             slippageBps: 1200
         });
-        const price = quote.outAmount / (10 ** 6);
-        return price;
+        return quote.outAmount / (10 ** 6); // Precio en USDT por token
     } catch (error) {
         console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
         return null;
@@ -386,34 +356,42 @@ async function tradingBot() {
             const currentPrice = await getTokenPrice(token);
             if (currentPrice === null) continue;
 
-            const { buyPrice, lastPrice, initialSold } = portfolio[token];
-            console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice}`);
-
+            const { buyPrice, lastPrice, initialSold, investedUsdt } = portfolio[token];
             const growth = currentPrice / buyPrice;
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
+            const growthPercent = (growth - 1) * 100;
 
-            if (currentPrice <= buyPrice) {
+            console.log(`${token}: Actual: ${currentPrice} | Compra: ${buyPrice} | Anterior: ${lastPrice} | Crecimiento: ${growthPercent.toFixed(2)}%`);
+
+            if (growth <= 1) {
                 console.log(`Stop-loss: ${currentPrice} <= ${buyPrice}`);
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
-                console.log(`Take-profit inicial ${INITIAL_TAKE_PROFIT * 100 - 100}%: ${(growth * 100).toFixed(2)}%`);
-                await sellToken(new PublicKey(token), 1 - MOONBAG_PORTION);
-            } else if (initialSold && (growthVsLast <= 0 || growth < 1.2)) {
-                console.log(`Moonbag venta: ${(growth * 100).toFixed(2)}% (estabilizado o < 20%)`);
+                console.log(`Recuperando capital (${INITIAL_TAKE_PROFIT * 100 - 100}%): ${growthPercent.toFixed(2)}%`);
+                const portionToRecover = Math.min(1, investedUsdt / (currentPrice * portfolio[token].amount));
+                await sellToken(new PublicKey(token), portionToRecover);
+            } else if (initialSold && growth >= 1.5 && growthVsLast > 0) {
+                console.log(`Escalando ganancias (x1.5): ${growthPercent.toFixed(2)}%`);
+                await sellToken(new PublicKey(token), SCALE_SELL_PORTION);
+            } else if (initialSold && (growthVsLast <= 0 || growth < 1.25)) {
+                console.log(`Saliendo: ${growthPercent.toFixed(2)}% (estabilizado o < 25%)`);
                 await sellToken(new PublicKey(token));
             } else {
-                console.log(`Esperando: Crecimiento ${(growth * 100).toFixed(2)}% (objetivo ${INITIAL_TAKE_PROFIT * 100}%)`);
+                console.log(`Esperando: Crecimiento ${growthPercent.toFixed(2)}%`);
                 portfolio[token].lastPrice = currentPrice;
             }
         }
     }
-    console.log('Ciclo completado. Esperando próximo ciclo en 1 minuto...');
+    console.log('Ciclo completado. Esperando próximo ciclo en 30 segundos...');
 }
 
 async function startBot() {
     const solBalance = await getWalletBalanceSol();
     tradingCapitalUsdt = await getWalletBalanceUsdt();
     console.log('Bot iniciado | Capital inicial:', tradingCapitalUsdt, 'USDT | SOL:', solBalance);
+    if (Math.abs(tradingCapitalUsdt - 19.98) > 0.01 || Math.abs(solBalance - 0.026276) > 0.0001) {
+        console.log('¡Advertencia! Saldos iniciales no coinciden con 19.98 USDT y 0.026276 SOL');
+    }
     await updateVolatileTokens();
     await tradingBot();
     setInterval(tradingBot, CYCLE_INTERVAL);
