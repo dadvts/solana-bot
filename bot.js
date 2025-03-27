@@ -104,7 +104,7 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/pairs/solana', {
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT', {
             headers: { 'Accept': 'application/json' }
         });
         const pairs = response.data.pairs || [];
