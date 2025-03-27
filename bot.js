@@ -20,8 +20,8 @@ const CYCLE_INTERVAL = 30000;
 const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 100000; // 100k USD
 const MAX_MARKET_CAP = 500000000; // 500M USD
-const MIN_VOLUME = 50000; // Reducido a 50k para más opciones
-const MIN_LIQUIDITY = 10000; // 10k USD
+const MIN_VOLUME = 25000; // Reducido a 25k para más opciones
+const MIN_LIQUIDITY = 5000; // Reducido a 5k
 const INITIAL_TAKE_PROFIT = 1.25; // 25%
 const SCALE_SELL_PORTION = 0.25; // 25%
 const TARGET_INITIAL_SOL = 1; // 1 SOL
@@ -65,7 +65,7 @@ async function getTokenBalance(tokenMint) {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles (inspirado en https://dexscreener.com/solana?rankBy=trendingScoreH1&order=desc)...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112', {
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=raydium', {
             headers: { 'Accept': 'application/json' }
         });
         const pairs = response.data.pairs || [];
