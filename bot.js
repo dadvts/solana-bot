@@ -119,11 +119,12 @@ async function updateVolatileTokens() {
             const pair = pairs[i];
             if (
                 pair.chainId !== 'solana' || 
-                pair.quoteToken.address !== SOL_MINT || 
+                pair.quoteToken.address !== SOL_MINT || // SOL como quote token
+                pair.baseToken.address === SOL_MINT || 
                 pair.baseToken.address === USDT_MINT || 
                 pair.baseToken.address === EXCLUDED_TOKEN
             ) {
-                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/*/SOL o es USDT)`);
+                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/*/SOL o es SOL/USDT)`);
                 continue;
             }
 
@@ -141,7 +142,6 @@ async function updateVolatileTokens() {
                 liquidity >= MIN_LIQUIDITY &&
                 ageInDays <= MAX_AGE_DAYS
             ) {
-                // Verificar si tiene ruta a USDT
                 try {
                     await jupiterApi.quoteGet({
                         inputMint: pair.baseToken.address,
