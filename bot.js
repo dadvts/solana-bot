@@ -21,7 +21,7 @@ const CYCLE_INTERVAL = 30000; // 30 segundos
 const UPDATE_INTERVAL = 180000; // 3 min
 const MIN_MARKET_CAP = 500000; // 0.5M USD
 const MAX_MARKET_CAP = 100000000; // 100M USD
-const MIN_VOLUME = 250000; // 250k USD (24h) - bajado para más oportunidades
+const MIN_VOLUME = 250000; // 250k USD (24h)
 const MIN_VOLUME_TO_MC_RATIO = 1; // Volumen/MC > 1
 const MIN_LIQUIDITY = 10000; // 10k USD
 const INITIAL_TAKE_PROFIT = 1.25; // 25%
@@ -116,8 +116,12 @@ async function updateVolatileTokens() {
 
         for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
             const pair = pairs[i];
-            if (pair.chainId !== 'solana' || pair.quoteToken.address !== USDT_MINT) {
-                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/USDT)`);
+            if (
+                pair.chainId !== 'solana' || 
+                pair.quoteToken.address !== USDT_MINT || 
+                pair.baseToken.address === USDT_MINT
+            ) {
+                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/USDT o es USDT/USDT)`);
                 continue;
             }
 
@@ -147,7 +151,7 @@ async function updateVolatileTokens() {
             }
 
             if (volatilePairs.length > 5) {
-                volatilePairs.sort((a, b) => b.volume24h - a.volume24h); // Simula trendingScoreH1 con volumen
+                volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
                 volatilePairs.pop();
             }
         }
