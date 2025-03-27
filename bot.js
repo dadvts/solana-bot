@@ -11,6 +11,7 @@ const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const EXCLUDED_TOKEN = 'Dn4noZ5jgGfkntzcQSUZ8czkreiZ1ForXYoV2H8Dm7S1'; // USDT no deseado
 
 let tradingCapitalUsdt = 0;
 let savedUsdt = 0;
@@ -21,13 +22,13 @@ const CYCLE_INTERVAL = 30000; // 30 segundos
 const UPDATE_INTERVAL = 180000; // 3 min
 const MIN_MARKET_CAP = 500000; // 0.5M USD
 const MAX_MARKET_CAP = 100000000; // 100M USD
-const MIN_VOLUME = 250000; // 250k USD (24h)
+const MIN_VOLUME = 100000; // 100k USD (24h) - bajado para más oportunidades
 const MIN_VOLUME_TO_MC_RATIO = 1; // Volumen/MC > 1
 const MIN_LIQUIDITY = 10000; // 10k USD
 const INITIAL_TAKE_PROFIT = 1.25; // 25%
 const SCALE_SELL_PORTION = 0.25; // 25% por escalón
 const TARGET_INITIAL_USDT = 180; // ~1 SOL
-const MAX_AGE_DAYS = 30; // Tokens < 30 días
+const MAX_AGE_DAYS = 7; // Tokens < 7 días para capturar trending
 
 let portfolio = {};
 let volatileTokens = [];
@@ -105,7 +106,7 @@ async function ensureSolForFees() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles (inspirado en https://dexscreener.com/solana?rankBy=trendingScoreH1&order=desc)...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT', {
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=SOL', { // Cambiamos a q=SOL para más pares
             headers: { 'Accept': 'application/json' }
         });
         const pairs = response.data.pairs || [];
@@ -118,10 +119,10 @@ async function updateVolatileTokens() {
             const pair = pairs[i];
             if (
                 pair.chainId !== 'solana' || 
-                pair.quoteToken.address !== USDT_MINT || 
-                pair.baseToken.address === USDT_MINT
+                (pair.baseToken.address === USDT_MINT || pair.baseToken.address === EXCLUDED_TOKEN) || 
+                pair.quoteToken.address !== USDT_MINT
             ) {
-                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/USDT o es USDT/USDT)`);
+                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/*/USDT o es USDT)`);
                 continue;
             }
 
@@ -176,7 +177,7 @@ async function selectBestToken() {
     const availableCapital = tradingCapitalUsdt;
 
     for (const tokenMint of volatileTokens) {
-        if (tokenMint === USDT_MINT || tokenMint === lastSoldToken) continue;
+        if (tokenMint === USDT_MINT || tokenMint === EXCLUDED_TOKEN || tokenMint === lastSoldToken) continue;
         try {
             const decimals = await getTokenDecimals(tokenMint);
             const quote = await jupiterApi.quoteGet({
@@ -350,6 +351,12 @@ async function tradingBot() {
     tradingCapitalUsdt = realBalanceUsdt;
 
     await syncPortfolio();
+
+    // Vender USDT comprado por error
+    if ('Dn4noZ5jgGfkntzcQSUZ8czkreiZ1ForXYoV2H8Dm7S1' in portfolio) {
+        console.log('Vendiendo USDT comprado por error...');
+        await sellToken(new PublicKey('Dn4noZ5jgGfkntzcQSUZ8czkreiZ1ForXYoV2H8Dm7S1'));
+    }
 
     if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
         console.log('Umbral crítico SOL: vendiendo todo...');
