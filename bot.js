@@ -21,12 +21,13 @@ const CYCLE_INTERVAL = 30000; // 30 segundos
 const UPDATE_INTERVAL = 180000; // 3 min
 const MIN_MARKET_CAP = 500000; // 0.5M USD
 const MAX_MARKET_CAP = 100000000; // 100M USD
-const MIN_VOLUME = 500000; // 500k USD (24h)
+const MIN_VOLUME = 250000; // 250k USD (24h) - bajado para más oportunidades
 const MIN_VOLUME_TO_MC_RATIO = 1; // Volumen/MC > 1
 const MIN_LIQUIDITY = 10000; // 10k USD
 const INITIAL_TAKE_PROFIT = 1.25; // 25%
 const SCALE_SELL_PORTION = 0.25; // 25% por escalón
 const TARGET_INITIAL_USDT = 180; // ~1 SOL
+const MAX_AGE_DAYS = 30; // Tokens < 30 días
 
 let portfolio = {};
 let volatileTokens = [];
@@ -102,7 +103,7 @@ async function ensureSolForFees() {
 }
 
 async function updateVolatileTokens() {
-    console.log('Actualizando tokens volátiles...');
+    console.log('Actualizando tokens volátiles (inspirado en https://dexscreener.com/solana?rankBy=trendingScoreH1&order=desc)...');
     try {
         const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=USDT', {
             headers: { 'Accept': 'application/json' }
@@ -115,12 +116,15 @@ async function updateVolatileTokens() {
 
         for (let i = 0; i < Math.min(pairs.length, maxPairsToProcess); i++) {
             const pair = pairs[i];
-            if (pair.chainId !== 'solana' || pair.quoteToken.address !== USDT_MINT) continue;
+            if (pair.chainId !== 'solana' || pair.quoteToken.address !== USDT_MINT) {
+                console.log(`Ignorado: ${pair.baseToken.symbol}/${pair.quoteToken.symbol} (no es Solana/USDT)`);
+                continue;
+            }
 
             const mc = pair.fdv || 0;
             const volume24h = pair.volume.h24 || 0;
             const liquidity = pair.liquidity.usd || 0;
-            const ageInDays = pair.createdAt ? (Date.now() - new Date(pair.createdAt).getTime()) / (1000 * 60 * 60 * 24) : Infinity;
+            const ageInDays = pair.createdAt ? (Date.now() - new Date(pair.createdAt).getTime()) / (1000 * 60 * 60 * 24) : 0;
 
             console.log(`Par ${pair.baseToken.symbol}/USDT | MC: ${mc} | Vol: ${volume24h} | Liq: ${liquidity} | Edad: ${ageInDays.toFixed(1)} días`);
 
@@ -129,12 +133,13 @@ async function updateVolatileTokens() {
                 mc <= MAX_MARKET_CAP &&
                 (volume24h >= MIN_VOLUME || (mc > 0 && volume24h / mc >= MIN_VOLUME_TO_MC_RATIO)) &&
                 liquidity >= MIN_LIQUIDITY &&
-                ageInDays <= 30
+                ageInDays <= MAX_AGE_DAYS
             ) {
                 volatilePairs.push({
                     address: pair.baseToken.address,
                     symbol: pair.baseToken.symbol || 'UNKNOWN',
-                    liquidity
+                    liquidity,
+                    volume24h
                 });
                 console.log(`Token viable: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
             } else {
@@ -142,12 +147,12 @@ async function updateVolatileTokens() {
             }
 
             if (volatilePairs.length > 5) {
-                volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
+                volatilePairs.sort((a, b) => b.volume24h - a.volume24h); // Simula trendingScoreH1 con volumen
                 volatilePairs.pop();
             }
         }
 
-        volatilePairs.sort((a, b) => b.liquidity - a.liquidity);
+        volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
         volatileTokens = volatilePairs.map(t => t.address);
         console.log('Lista actualizada:', volatileTokens);
 
