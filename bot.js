@@ -14,7 +14,7 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 let tradingCapitalSol = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT_SOL = 0.01;
-const FEE_RESERVE_SOL = 0.01;
+const FEE_RESERVE_SOL = 0.001; // Reducido para operaciones recurrentes
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 30000;
 const UPDATE_INTERVAL = 180000;
@@ -174,7 +174,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
             headers: { 'Content-Type': 'application/json' }
         });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base58'));
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64')); // Corregido a base64
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         const confirmation = await connection.confirmTransaction(txid, 'confirmed');
@@ -228,7 +228,7 @@ async function sellToken(tokenPubKey, portion = 1) {
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
             headers: { 'Content-Type': 'application/json' }
         });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base58'));
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64')); // Corregido a base64
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
         const confirmation = await connection.confirmTransaction(txid, 'confirmed');
@@ -297,9 +297,9 @@ async function tradingBot() {
     }
 
     if (Object.keys(portfolio).length === 0) {
-        if (tradingCapitalSol >= MIN_TRADE_AMOUNT_SOL) {
+        if (tradingCapitalSol >= MIN_TRADE_AMOUNT_SOL + FEE_RESERVE_SOL) {
             const bestToken = await selectBestToken();
-            if (bestToken) await buyToken(bestToken.token, tradingCapitalSol);
+            if (bestToken) await buyToken(bestToken.token, tradingCapitalSol - FEE_RESERVE_SOL);
             else console.log('No se encontraron tokens viables para comprar');
         } else {
             console.log('Capital insuficiente para comprar más');
@@ -342,11 +342,11 @@ async function startBot() {
     tradingCapitalSol = solBalance;
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
 
-    // Inicializar portfolio con BabyGhibli si ya está comprado
+    // Inicializar portfolio con BabyGhibli
     const babyGhibliBalance = await getTokenBalance('Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ');
     if (babyGhibliBalance > 0) {
         portfolio['Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ'] = {
-            buyPrice: 0.000002323, // Precio estimado de la compra previa
+            buyPrice: 0.000002323,
             amount: babyGhibliBalance,
             lastPrice: 0.000002323,
             decimals: 6,
