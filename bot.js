@@ -8,7 +8,6 @@ const connection = new Connection('https://api.mainnet-beta.solana.com', 'confir
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
-const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
@@ -52,15 +51,25 @@ async function getWalletBalanceSol() {
     }
 }
 
-async function getTokenBalance(tokenMint) {
-    try {
-        const ata = await getAssociatedTokenAddress(new PublicKey(tokenMint), walletPubKey);
-        const account = await getAccount(connection, ata);
-        const decimals = await getTokenDecimals(tokenMint);
-        return Number(account.amount) / (10 ** decimals);
-    } catch (error) {
-        console.log(`Error obteniendo saldo de ${tokenMint}: ${error.message}`);
-        return 0;
+async function getTokenBalance(tokenMint, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const mintPubKey = new PublicKey(tokenMint);
+            const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+            console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()} para ${tokenMint}`);
+            const account = await getAccount(connection, ata);
+            const decimals = await getTokenDecimals(tokenMint);
+            const balance = Number(account.amount) / (10 ** decimals);
+            console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
+            return balance;
+        } catch (error) {
+            console.log(`Intento ${attempt} fallido para ${tokenMint}: ${error.message}`);
+            if (attempt === retries) {
+                console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
+                return 0;
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Espera 1s antes de reintentar
+        }
     }
 }
 
@@ -354,6 +363,7 @@ async function startBot() {
     const solBalance = await getWalletBalanceSol();
     tradingCapitalSol = solBalance;
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
+    console.log('Dirección de la wallet:', walletPubKey.toBase58());
 
     // Inicializar portfolio con BabyGhibli
     const babyGhibliMint = 'Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ';
