@@ -14,7 +14,7 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 let tradingCapitalSol = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT_SOL = 0.01;
-const FEE_RESERVE_SOL = 0.001; // Reducido para operaciones recurrentes
+const FEE_RESERVE_SOL = 0.001;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 30000;
 const UPDATE_INTERVAL = 180000;
@@ -26,6 +26,7 @@ const INITIAL_TAKE_PROFIT = 1.25;
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 1;
 const MAX_AGE_DAYS = 7;
+const STOP_LOSS_THRESHOLD = 0.9;
 
 let portfolio = {};
 let volatileTokens = [];
@@ -36,6 +37,7 @@ async function getTokenDecimals(mintPubKey) {
         const mint = await getMint(connection, new PublicKey(mintPubKey));
         return mint.decimals;
     } catch (error) {
+        console.log(`Error obteniendo decimales de ${mintPubKey}: ${error.message}`);
         return 6;
     }
 }
@@ -57,6 +59,7 @@ async function getTokenBalance(tokenMint) {
         const decimals = await getTokenDecimals(tokenMint);
         return Number(account.amount) / (10 ** decimals);
     } catch (error) {
+        console.log(`Error obteniendo saldo de ${tokenMint}: ${error.message}`);
         return 0;
     }
 }
@@ -125,7 +128,7 @@ async function updateVolatileTokens() {
 async function selectBestToken() {
     let bestToken = null;
     let highestReturn = 0;
-    const availableCapital = tradingCapitalSol;
+    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL;
 
     for (const tokenMint of volatileTokens) {
         if (tokenMint === SOL_MINT || tokenMint === lastSoldToken) continue;
@@ -153,7 +156,7 @@ async function selectBestToken() {
 async function buyToken(tokenPubKey, amountPerTrade) {
     try {
         const solBalance = await getWalletBalanceSol();
-        const tradeAmount = Math.min(amountPerTrade * 0.95, solBalance - FEE_RESERVE_SOL);
+        const tradeAmount = Math.min(amountPerTrade, solBalance - FEE_RESERVE_SOL);
         if (tradeAmount < MIN_TRADE_AMOUNT_SOL) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
@@ -174,21 +177,25 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
             headers: { 'Content-Type': 'application/json' }
         });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64')); // Corregido a base64
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
-        const confirmation = await connection.confirmTransaction(txid, 'confirmed');
+        const confirmation = await connection.confirmTransaction(txid, 'confirmed', { commitment: 'confirmed', timeout: 60000 });
         if (!confirmation.value.err) {
+            const existing = portfolio[tokenPubKey.toBase58()] || { amount: 0, investedSol: 0, buyPrice: buyPrice, decimals: decimals };
+            const totalAmount = existing.amount + tokenAmount;
+            const totalInvested = existing.investedSol + tradeAmount;
+            const avgBuyPrice = totalInvested / totalAmount;
             portfolio[tokenPubKey.toBase58()] = {
-                buyPrice,
-                amount: tokenAmount,
+                buyPrice: avgBuyPrice,
+                amount: totalAmount,
                 lastPrice: buyPrice,
                 decimals,
                 initialSold: false,
-                investedSol: tradeAmount
+                investedSol: totalInvested
             };
             tradingCapitalSol -= tradeAmount;
-            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Precio: ${buyPrice} SOL | Capital: ${tradingCapitalSol} SOL`);
+            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Precio: ${buyPrice} SOL | Total: ${totalAmount} | Capital: ${tradingCapitalSol} SOL`);
         }
     } catch (error) {
         console.log(`Error compra ${tokenPubKey.toBase58()}: ${error.message}`);
@@ -228,13 +235,12 @@ async function sellToken(tokenPubKey, portion = 1) {
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest, {
             headers: { 'Content-Type': 'application/json' }
         });
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64')); // Corregido a base64
+        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
-        const confirmation = await connection.confirmTransaction(txid, 'confirmed');
-        
+        const confirmation = await connection.confirmTransaction(txid, 'confirmed', { commitment: 'confirmed', timeout: 60000 });
         if (!confirmation.value.err) {
-            console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
+            console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint} | Restante: ${realBalance - sellAmount}`);
             portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
             if (portfolio[tokenMint].amount === 0) {
                 lastSoldToken = tokenMint;
@@ -270,6 +276,7 @@ async function getTokenPrice(tokenMint) {
         });
         return quote.outAmount / LAMPORTS_PER_SOL;
     } catch (error) {
+        console.log(`Error obteniendo precio de ${tokenMint}: ${error.message}`);
         return null;
     }
 }
@@ -278,7 +285,13 @@ async function syncPortfolio() {
     const existingTokens = Object.keys(portfolio);
     for (const token of existingTokens) {
         const balance = await getTokenBalance(token);
-        if (balance === 0) delete portfolio[token];
+        if (balance === 0) {
+            console.log(`Eliminando ${token} del portfolio: saldo 0`);
+            delete portfolio[token];
+        } else {
+            portfolio[token].amount = balance;
+            console.log(`Portfolio actualizado: ${token} con ${balance} tokens`);
+        }
     }
 }
 
@@ -314,10 +327,10 @@ async function tradingBot() {
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
             const growthPercent = (growth - 1) * 100;
 
-            console.log(`${token}: Precio actual: ${currentPrice} SOL | Compra: ${buyPrice} SOL | Crecimiento: ${growthPercent.toFixed(2)}%`);
+            console.log(`${token}: Precio actual: ${currentPrice} SOL | Compra: ${buyPrice} SOL | Crecimiento: ${growthPercent.toFixed(2)}% | Cantidad: ${portfolio[token].amount}`);
 
-            if (growth <= 1) {
-                console.log(`Stop-loss activado para ${token}`);
+            if (growth <= STOP_LOSS_THRESHOLD) {
+                console.log(`Stop-loss activado para ${token} (caída > 10%)`);
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
                 console.log(`Take-profit inicial (${INITIAL_TAKE_PROFIT * 100 - 100}%) para ${token}`);
@@ -343,17 +356,23 @@ async function startBot() {
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
 
     // Inicializar portfolio con BabyGhibli
-    const babyGhibliBalance = await getTokenBalance('Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ');
+    const babyGhibliMint = 'Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ';
+    const babyGhibliBalance = await getTokenBalance(babyGhibliMint);
+    console.log(`Saldo de BabyGhibli detectado: ${babyGhibliBalance}`);
     if (babyGhibliBalance > 0) {
-        portfolio['Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ'] = {
-            buyPrice: 0.000002323,
+        const totalInvested = 0.158 + 0.04165;
+        const avgBuyPrice = totalInvested / babyGhibliBalance;
+        portfolio[babyGhibliMint] = {
+            buyPrice: avgBuyPrice,
             amount: babyGhibliBalance,
-            lastPrice: 0.000002323,
+            lastPrice: avgBuyPrice,
             decimals: 6,
             initialSold: false,
-            investedSol: 0.158
+            investedSol: totalInvested
         };
-        console.log(`Portfolio inicializado con ${babyGhibliBalance} BabyGhibli`);
+        console.log(`Portfolio inicializado con ${babyGhibliBalance} BabyGhibli | Precio promedio: ${avgBuyPrice} SOL`);
+    } else {
+        console.log('No se detectaron BabyGhibli en la wallet');
     }
 
     await updateVolatileTokens();
