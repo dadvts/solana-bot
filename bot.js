@@ -8,6 +8,7 @@ const connection = new Connection('https://api.mainnet-beta.solana.com', 'confir
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
+const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
@@ -52,23 +53,29 @@ async function getWalletBalanceSol() {
 }
 
 async function getTokenBalance(tokenMint, retries = 3) {
+    const mintPubKey = new PublicKey(tokenMint);
+    const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+    console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint} en wallet ${walletPubKey.toBase58()}`);
+
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-            const mintPubKey = new PublicKey(tokenMint);
-            const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
-            console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()} para ${tokenMint}`);
-            const account = await getAccount(connection, ata);
+            console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
+            const account = await getAccount(connection, ata, 'confirmed');
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido para ${tokenMint}: ${error.message}`);
+            console.log(`Intento ${attempt} fallido: ${error.message}`);
+            if (error.message.includes('Account not found')) {
+                console.log(`La ATA ${ata.toBase58()} no existe en la blockchain para ${tokenMint}`);
+                return 0; // Si la cuenta no existe, no hay tokens
+            }
             if (attempt === retries) {
                 console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
                 return 0;
             }
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Espera 1s antes de reintentar
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
 }
@@ -346,49 +353,4 @@ async function tradingBot() {
                 const portionToRecover = Math.min(1, investedSol / (currentPrice * portfolio[token].amount));
                 await sellToken(new PublicKey(token), portionToRecover);
             } else if (initialSold && growth >= 1.5 && growthVsLast > 0) {
-                console.log(`Escalando ganancias (x1.5) para ${token}`);
-                await sellToken(new PublicKey(token), SCALE_SELL_PORTION);
-            } else if (initialSold && (growthVsLast <= 0 || growth < 1.25)) {
-                console.log(`Saliendo de ${token}: crecimiento estabilizado o < 25%`);
-                await sellToken(new PublicKey(token));
-            } else {
-                portfolio[token].lastPrice = currentPrice;
-            }
-        }
-    }
-    console.log('Ciclo completado.');
-}
-
-async function startBot() {
-    const solBalance = await getWalletBalanceSol();
-    tradingCapitalSol = solBalance;
-    console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
-    console.log('Dirección de la wallet:', walletPubKey.toBase58());
-
-    // Inicializar portfolio con BabyGhibli
-    const babyGhibliMint = 'Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ';
-    const babyGhibliBalance = await getTokenBalance(babyGhibliMint);
-    console.log(`Saldo de BabyGhibli detectado: ${babyGhibliBalance}`);
-    if (babyGhibliBalance > 0) {
-        const totalInvested = 0.158 + 0.04165;
-        const avgBuyPrice = totalInvested / babyGhibliBalance;
-        portfolio[babyGhibliMint] = {
-            buyPrice: avgBuyPrice,
-            amount: babyGhibliBalance,
-            lastPrice: avgBuyPrice,
-            decimals: 6,
-            initialSold: false,
-            investedSol: totalInvested
-        };
-        console.log(`Portfolio inicializado con ${babyGhibliBalance} BabyGhibli | Precio promedio: ${avgBuyPrice} SOL`);
-    } else {
-        console.log('No se detectaron BabyGhibli en la wallet');
-    }
-
-    await updateVolatileTokens();
-    await tradingBot();
-    setInterval(tradingBot, CYCLE_INTERVAL);
-    setInterval(updateVolatileTokens, UPDATE_INTERVAL);
-}
-
-startBot();
+                console.log(`Escalando ganancias...
