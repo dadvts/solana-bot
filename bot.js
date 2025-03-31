@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddress, getAccount } = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
@@ -14,7 +14,7 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 let tradingCapitalSol = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT_SOL = 0.001;
-const FEE_RESERVE_SOL = 0.003; // Reducido para operar con poco SOL
+const FEE_RESERVE_SOL = 0.003;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
@@ -77,6 +77,35 @@ async function getTokenBalance(tokenMint, retries = 5) {
             }
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
+    }
+}
+
+async function scanWalletForTokens() {
+    console.log('Escaneando wallet para tokens...');
+    try {
+        const accounts = await connection.getTokenAccountsByOwner(walletPubKey, { programId: TOKEN_PROGRAM_ID });
+        for (const { pubkey, account } of accounts) {
+            const ata = pubkey.toBase58();
+            const accountData = account.data;
+            const tokenAccountInfo = await getAccount(connection, pubkey);
+            const mint = tokenAccountInfo.mint.toBase58();
+            const balance = await getTokenBalance(mint);
+            if (balance > 0 && !portfolio[mint]) {
+                const decimals = await getTokenDecimals(mint);
+                const price = await getTokenPrice(mint) || 0.000001; // Precio estimado si falla
+                portfolio[mint] = {
+                    buyPrice: price, // Precio actual como base si no hay historial
+                    amount: balance,
+                    lastPrice: price,
+                    decimals,
+                    initialSold: false,
+                    investedSol: balance * price // Estimado
+                };
+                console.log(`Token detectado: ${mint} | Cantidad: ${balance} | Añadido al portfolio`);
+            }
+        }
+    } catch (error) {
+        console.log(`Error escaneando wallet: ${error.message}`);
     }
 }
 
@@ -298,6 +327,7 @@ async function getTokenPrice(tokenMint) {
 }
 
 async function syncPortfolio() {
+    await scanWalletForTokens(); // Escanea la wallet primero
     const existingTokens = Object.keys(portfolio);
     for (const token of existingTokens) {
         const balance = await getTokenBalance(token);
