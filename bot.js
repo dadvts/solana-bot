@@ -4,7 +4,10 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+// Cambiar a una RPC más confiable (reemplaza con tu propia URL si tienes una)
+const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/demo', 'confirmed');
+// Si tienes una clave de QuickNode o Alchemy, úsala aquí: 'https://YOUR_RPC_URL'
+
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
@@ -60,14 +63,14 @@ async function getTokenBalance(tokenMint, retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            const account = await getAccount(connection, ata, 'confirmed', { timeout: 10000 });
+            const account = await getAccount(connection, ata, 'confirmed', { timeout: 15000 });
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido: ${error.message || 'Error desconocido'} | Detalles: ${error.stack}`);
-            if (error.message.includes('Account not found')) {
+            console.log(`Intento ${attempt} fallido: ${error.name || 'Error desconocido'} | Mensaje: ${error.message}`);
+            if (error.name === 'TokenAccountNotFoundError') {
                 console.log(`La ATA ${ata.toBase58()} no existe en la blockchain para ${tokenMint}`);
                 return 0;
             }
@@ -84,7 +87,8 @@ async function scanWalletForTokens() {
     console.log('Escaneando wallet para tokens...');
     try {
         const response = await connection.getTokenAccountsByOwner(walletPubKey, { programId: TOKEN_PROGRAM_ID });
-        const accounts = response.value; // Acceder a .value
+        const accounts = response.value;
+        console.log(`Cuentas encontradas: ${accounts.length}`);
         if (!accounts || !Array.isArray(accounts)) {
             console.log('No se encontraron cuentas de tokens o formato inesperado');
             return;
@@ -94,10 +98,11 @@ async function scanWalletForTokens() {
             const ata = pubkey.toBase58();
             const tokenAccountInfo = await getAccount(connection, pubkey);
             const mint = tokenAccountInfo.mint.toBase58();
+            console.log(`Procesando ATA ${ata} para mint ${mint}`);
             const balance = await getTokenBalance(mint);
             if (balance > 0 && !portfolio[mint]) {
                 const decimals = await getTokenDecimals(mint);
-                const price = await getTokenPrice(mint) || 0.0000011080956078260817; // Precio de compra original si falla
+                const price = await getTokenPrice(mint) || 0.0000011080956078260817; // Precio de compra original
                 portfolio[mint] = {
                     buyPrice: price,
                     amount: balance,
