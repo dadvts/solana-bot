@@ -4,8 +4,8 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-// Usar RPC de QuickNode gratuita como fallback (reemplaza con tu propia RPC si tienes)
-const connection = new Connection('https://solana-mainnet.rpc.extrnode.com', 'confirmed');
+// Usar RPC pública con fallback
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -62,16 +62,15 @@ async function getTokenBalance(tokenMint, retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            const accountInfo = await connection.getAccountInfo(ata, 'confirmed');
-            if (!accountInfo) throw new Error('Cuenta no encontrada en la blockchain');
             const account = await getAccount(connection, ata, 'confirmed', { timeout: 15000 });
+            if (!account) throw new Error('Cuenta no encontrada');
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
             console.log(`Intento ${attempt} fallido: ${error.name || 'Error desconocido'} | ${error.message}`);
-            if (error.name === 'TokenAccountNotFoundError' || error.message.includes('Cuenta no encontrada')) {
+            if (error.name === 'TokenAccountNotFoundError') {
                 console.log(`ATA ${ata.toBase58()} no existe para ${tokenMint}`);
                 return 0;
             }
