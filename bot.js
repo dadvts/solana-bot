@@ -13,8 +13,8 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.01;
-const FEE_RESERVE_SOL = 0.001;
+const MIN_TRADE_AMOUNT_SOL = 0.005; // Reducido para operar con poco capital
+const FEE_RESERVE_SOL = 0.003; // Aumentado para cubrir ATA + fees
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
@@ -118,7 +118,7 @@ async function updateVolatileTokens() {
                     await jupiterApi.quoteGet({
                         inputMint: SOL_MINT,
                         outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.01 * LAMPORTS_PER_SOL),
+                        amount: Math.floor(0.005 * LAMPORTS_PER_SOL),
                         slippageBps: 1200
                     });
                     volatilePairs.push({
