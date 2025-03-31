@@ -83,29 +83,53 @@ async function getTokenBalance(tokenMint, retries = 5) {
 async function scanWalletForTokens() {
     console.log('Escaneando wallet para tokens...');
     try {
-        const accounts = await connection.getTokenAccountsByOwner(walletPubKey, { programId: TOKEN_PROGRAM_ID });
+        const response = await connection.getTokenAccountsByOwner(walletPubKey, { programId: TOKEN_PROGRAM_ID });
+        const accounts = response.value; // Acceder a .value
+        if (!accounts || !Array.isArray(accounts)) {
+            console.log('No se encontraron cuentas de tokens o formato inesperado');
+            return;
+        }
+
         for (const { pubkey, account } of accounts) {
             const ata = pubkey.toBase58();
-            const accountData = account.data;
             const tokenAccountInfo = await getAccount(connection, pubkey);
             const mint = tokenAccountInfo.mint.toBase58();
             const balance = await getTokenBalance(mint);
             if (balance > 0 && !portfolio[mint]) {
                 const decimals = await getTokenDecimals(mint);
-                const price = await getTokenPrice(mint) || 0.000001; // Precio estimado si falla
+                const price = await getTokenPrice(mint) || 0.0000011080956078260817; // Precio de compra original si falla
                 portfolio[mint] = {
-                    buyPrice: price, // Precio actual como base si no hay historial
+                    buyPrice: price,
                     amount: balance,
                     lastPrice: price,
                     decimals,
                     initialSold: false,
-                    investedSol: balance * price // Estimado
+                    investedSol: balance * price
                 };
                 console.log(`Token detectado: ${mint} | Cantidad: ${balance} | Añadido al portfolio`);
             }
         }
+
+        // Chequeo específico para 5j3H16JJ...
+        const specificMint = '5j3H16JJNstME8nriQNytoaS4oGgUA42Sha3sTpt897S';
+        if (!portfolio[specificMint]) {
+            const balance = await getTokenBalance(specificMint);
+            if (balance > 0) {
+                const decimals = await getTokenDecimals(specificMint);
+                const price = await getTokenPrice(specificMint) || 0.0000011080956078260817;
+                portfolio[specificMint] = {
+                    buyPrice: price,
+                    amount: balance,
+                    lastPrice: price,
+                    decimals,
+                    initialSold: false,
+                    investedSol: balance * price
+                };
+                console.log(`Token específico detectado: ${specificMint} | Cantidad: ${balance} | Añadido al portfolio`);
+            }
+        }
     } catch (error) {
-        console.log(`Error escaneando wallet: ${error.message}`);
+        console.log(`Error escaneando wallet: ${error.message} | Detalles: ${error.stack}`);
     }
 }
 
