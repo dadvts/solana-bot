@@ -4,9 +4,8 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-// Cambiar a una RPC más confiable (reemplaza con tu propia URL si tienes una)
-const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/demo', 'confirmed');
-// Si tienes una clave de QuickNode o Alchemy, úsala aquí: 'https://YOUR_RPC_URL'
+// Volver a la RPC pública de Solana
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -102,7 +101,7 @@ async function scanWalletForTokens() {
             const balance = await getTokenBalance(mint);
             if (balance > 0 && !portfolio[mint]) {
                 const decimals = await getTokenDecimals(mint);
-                const price = await getTokenPrice(mint) || 0.0000011080956078260817; // Precio de compra original
+                const price = await getTokenPrice(mint) || 0.0000011080956078260817;
                 portfolio[mint] = {
                     buyPrice: price,
                     amount: balance,
@@ -356,7 +355,6 @@ async function getTokenPrice(tokenMint) {
 }
 
 async function syncPortfolio() {
-    await scanWalletForTokens(); // Escanea la wallet primero
     const existingTokens = Object.keys(portfolio);
     for (const token of existingTokens) {
         const balance = await getTokenBalance(token);
@@ -432,6 +430,7 @@ async function startBot() {
     console.log('Dirección de la wallet:', walletPubKey.toBase58());
 
     await updateVolatileTokens();
+    await scanWalletForTokens(); // Escaneo inicial único
     await tradingBot();
     setInterval(tradingBot, CYCLE_INTERVAL);
     setInterval(updateVolatileTokens, UPDATE_INTERVAL);
