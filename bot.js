@@ -4,7 +4,7 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-// Volver a la RPC pública de Solana
+// Usar RPC pública con fallback
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -57,20 +57,21 @@ async function getWalletBalanceSol() {
 async function getTokenBalance(tokenMint, retries = 5) {
     const mintPubKey = new PublicKey(tokenMint);
     const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
-    console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint} en wallet ${walletPubKey.toBase58()}`);
+    console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint}`);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const account = await getAccount(connection, ata, 'confirmed', { timeout: 15000 });
+            if (!account) throw new Error('Cuenta no encontrada');
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido: ${error.name || 'Error desconocido'} | Mensaje: ${error.message}`);
+            console.log(`Intento ${attempt} fallido: ${error.name || 'Error desconocido'} | ${error.message}`);
             if (error.name === 'TokenAccountNotFoundError') {
-                console.log(`La ATA ${ata.toBase58()} no existe en la blockchain para ${tokenMint}`);
+                console.log(`ATA ${ata.toBase58()} no existe para ${tokenMint}`);
                 return 0;
             }
             if (attempt === retries) {
@@ -89,7 +90,7 @@ async function scanWalletForTokens() {
         const accounts = response.value;
         console.log(`Cuentas encontradas: ${accounts.length}`);
         if (!accounts || !Array.isArray(accounts)) {
-            console.log('No se encontraron cuentas de tokens o formato inesperado');
+            console.log('No se encontraron cuentas de tokens');
             return;
         }
 
@@ -101,7 +102,7 @@ async function scanWalletForTokens() {
             const balance = await getTokenBalance(mint);
             if (balance > 0 && !portfolio[mint]) {
                 const decimals = await getTokenDecimals(mint);
-                const price = await getTokenPrice(mint) || 0.0000011080956078260817;
+                const price = await getTokenPrice(mint) || 0.000001;
                 portfolio[mint] = {
                     buyPrice: price,
                     amount: balance,
@@ -110,30 +111,11 @@ async function scanWalletForTokens() {
                     initialSold: false,
                     investedSol: balance * price
                 };
-                console.log(`Token detectado: ${mint} | Cantidad: ${balance} | Añadido al portfolio`);
-            }
-        }
-
-        // Chequeo específico para 5j3H16JJ...
-        const specificMint = '5j3H16JJNstME8nriQNytoaS4oGgUA42Sha3sTpt897S';
-        if (!portfolio[specificMint]) {
-            const balance = await getTokenBalance(specificMint);
-            if (balance > 0) {
-                const decimals = await getTokenDecimals(specificMint);
-                const price = await getTokenPrice(specificMint) || 0.0000011080956078260817;
-                portfolio[specificMint] = {
-                    buyPrice: price,
-                    amount: balance,
-                    lastPrice: price,
-                    decimals,
-                    initialSold: false,
-                    investedSol: balance * price
-                };
-                console.log(`Token específico detectado: ${specificMint} | Cantidad: ${balance} | Añadido al portfolio`);
+                console.log(`Token detectado: ${mint} | Cantidad: ${balance}`);
             }
         }
     } catch (error) {
-        console.log(`Error escaneando wallet: ${error.message} | Detalles: ${error.stack}`);
+        console.log(`Error escaneando wallet: ${error.message}`);
     }
 }
 
@@ -191,7 +173,6 @@ async function updateVolatileTokens() {
         volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
         volatileTokens = volatilePairs.slice(0, 5).map(t => t.address);
         console.log('Lista actualizada:', volatileTokens);
-        if (volatileTokens.length === 0) console.log('No se encontraron tokens viables');
     } catch (error) {
         console.log('Error DexScreener:', error.message);
         volatileTokens = [];
@@ -204,7 +185,7 @@ async function selectBestToken() {
     const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL;
 
     for (const tokenMint of volatileTokens) {
-        if (tokenMint === SOL_MINT || tokenMint === lastSoldToken) continue;
+        if (tokenMint === SOL_MINT || tokenMint === lastSoldToken || portfolio[tokenMint]) continue;
         try {
             const decimals = await getTokenDecimals(tokenMint);
             const quote = await jupiterApi.quoteGet({
@@ -255,8 +236,9 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const txid = await connection.sendRawTransaction(transaction.serialize());
         const confirmation = await connection.confirmTransaction(txid, 'confirmed', { commitment: 'confirmed', timeout: 60000 });
         if (!confirmation.value.err) {
-            const existing = portfolio[tokenPubKey.toBase58()] || { amount: 0, investedSol: 0, buyPrice: buyPrice, decimals: decimals };
-            const totalAmount = existing.amount + tokenAmount;
+            const balance = await getTokenBalance(tokenPubKey.toBase58());
+            const existing = portfolio[tokenPubKey.toBase58()] || { amount: 0, investedSol: 0, buyPrice: buyPrice, decimals };
+            const totalAmount = existing.amount + balance;
             const totalInvested = existing.investedSol + tradeAmount;
             const avgBuyPrice = totalInvested / totalAmount;
             portfolio[tokenPubKey.toBase58()] = {
@@ -268,7 +250,9 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                 investedSol: totalInvested
             };
             tradingCapitalSol -= tradeAmount;
-            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Precio: ${buyPrice} SOL | Total: ${totalAmount} | Capital: ${tradingCapitalSol} SOL`);
+            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenPubKey.toBase58()} | Precio: ${buyPrice} SOL`);
+        } else {
+            console.log(`Compra fallida: ${txid} | Error en confirmación`);
         }
     } catch (error) {
         console.log(`Error compra ${tokenPubKey.toBase58()}: ${error.message}`);
@@ -313,7 +297,7 @@ async function sellToken(tokenPubKey, portion = 1) {
         const txid = await connection.sendRawTransaction(transaction.serialize());
         const confirmation = await connection.confirmTransaction(txid, 'confirmed', { commitment: 'confirmed', timeout: 60000 });
         if (!confirmation.value.err) {
-            console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint} | Restante: ${realBalance - sellAmount}`);
+            console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
             portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
             if (portfolio[tokenMint].amount === 0) {
                 lastSoldToken = tokenMint;
@@ -430,7 +414,7 @@ async function startBot() {
     console.log('Dirección de la wallet:', walletPubKey.toBase58());
 
     await updateVolatileTokens();
-    await scanWalletForTokens(); // Escaneo inicial único
+    await scanWalletForTokens();
     await tradingBot();
     setInterval(tradingBot, CYCLE_INTERVAL);
     setInterval(updateVolatileTokens, UPDATE_INTERVAL);
