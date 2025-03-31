@@ -13,8 +13,8 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.001; // Reducido aún más para pruebas
-const FEE_RESERVE_SOL = 0.005; // Margen para ATA (~0.002) + fees (~0.003)
+const MIN_TRADE_AMOUNT_SOL = 0.001;
+const FEE_RESERVE_SOL = 0.003; // Reducido para operar con poco SOL
 const CRITICAL_THRESHOLD_SOL = 0.0001;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
@@ -52,7 +52,7 @@ async function getWalletBalanceSol() {
     }
 }
 
-async function getTokenBalance(tokenMint, retries = 3) {
+async function getTokenBalance(tokenMint, retries = 5) {
     const mintPubKey = new PublicKey(tokenMint);
     const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
     console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint} en wallet ${walletPubKey.toBase58()}`);
@@ -60,13 +60,13 @@ async function getTokenBalance(tokenMint, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            const account = await getAccount(connection, ata, 'confirmed');
+            const account = await getAccount(connection, ata, 'confirmed', { timeout: 10000 });
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido: ${error.message || 'Error desconocido'}`);
+            console.log(`Intento ${attempt} fallido: ${error.message || 'Error desconocido'} | Detalles: ${error.stack}`);
             if (error.message.includes('Account not found')) {
                 console.log(`La ATA ${ata.toBase58()} no existe en la blockchain para ${tokenMint}`);
                 return 0;
@@ -75,7 +75,7 @@ async function getTokenBalance(tokenMint, retries = 3) {
                 console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
                 return 0;
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }
     }
 }
