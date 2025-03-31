@@ -16,17 +16,17 @@ let savedSol = 0;
 const MIN_TRADE_AMOUNT_SOL = 0.01;
 const FEE_RESERVE_SOL = 0.001;
 const CRITICAL_THRESHOLD_SOL = 0.0001;
-const CYCLE_INTERVAL = 30000;
-const UPDATE_INTERVAL = 180000;
+const CYCLE_INTERVAL = 30000; // 30s
+const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000;
 const MAX_MARKET_CAP = 500000000;
 const MIN_VOLUME = 25000;
 const MIN_LIQUIDITY = 5000;
-const INITIAL_TAKE_PROFIT = 1.25;
+const INITIAL_TAKE_PROFIT = 1.15; // +15%
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 1;
 const MAX_AGE_DAYS = 7;
-const STOP_LOSS_THRESHOLD = 0.9;
+const STOP_LOSS_THRESHOLD = 0.95; // -5%
 
 let portfolio = {};
 let volatileTokens = [];
@@ -66,7 +66,7 @@ async function getTokenBalance(tokenMint, retries = 3) {
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido: ${error.message}`);
+            console.log(`Intento ${attempt} fallido: ${error.message || 'Error desconocido'}`);
             if (error.message.includes('Account not found')) {
                 console.log(`La ATA ${ata.toBase58()} no existe en la blockchain para ${tokenMint}`);
                 return 0;
@@ -118,7 +118,7 @@ async function updateVolatileTokens() {
                     await jupiterApi.quoteGet({
                         inputMint: SOL_MINT,
                         outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.1 * LAMPORTS_PER_SOL),
+                        amount: Math.floor(0.01 * LAMPORTS_PER_SOL),
                         slippageBps: 1200
                     });
                     volatilePairs.push({
@@ -346,17 +346,17 @@ async function tradingBot() {
             console.log(`${token}: Precio actual: ${currentPrice} SOL | Compra: ${buyPrice} SOL | Crecimiento: ${growthPercent.toFixed(2)}% | Cantidad: ${portfolio[token].amount}`);
 
             if (growth <= STOP_LOSS_THRESHOLD) {
-                console.log(`Stop-loss activado para ${token} (caída > 10%)`);
+                console.log(`Stop-loss activado para ${token} (caída > 5%)`);
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
-                console.log(`Take-profit inicial (${INITIAL_TAKE_PROFIT * 100 - 100}%) para ${token}`);
+                console.log(`Take-profit inicial (${(INITIAL_TAKE_PROFIT * 100 - 100)}%) para ${token}`);
                 const portionToRecover = Math.min(1, investedSol / (currentPrice * portfolio[token].amount));
                 await sellToken(new PublicKey(token), portionToRecover);
-            } else if (initialSold && growth >= 1.5 && growthVsLast > 0) {
-                console.log(`Escalando ganancias (x1.5) para ${token}`);
+            } else if (initialSold && growth >= 1.3 && growthVsLast > 0) {
+                console.log(`Escalando ganancias (x1.3) para ${token}`);
                 await sellToken(new PublicKey(token), SCALE_SELL_PORTION);
-            } else if (initialSold && (growthVsLast <= 0 || growth < 1.25)) {
-                console.log(`Saliendo de ${token}: crecimiento estabilizado o < 25%`);
+            } else if (initialSold && (growthVsLast <= 0 || growth < 1.15)) {
+                console.log(`Saliendo de ${token}: crecimiento estabilizado o < 15%`);
                 await sellToken(new PublicKey(token));
             } else {
                 portfolio[token].lastPrice = currentPrice;
@@ -371,26 +371,6 @@ async function startBot() {
     tradingCapitalSol = solBalance;
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
     console.log('Dirección de la wallet:', walletPubKey.toBase58());
-
-    // Inicializar portfolio con BabyGhibli
-    const babyGhibliMint = 'Edw39XhQLw1GqcLBhibYf99W6w78WQMA4yZBbJzXvnJQ';
-    const babyGhibliBalance = await getTokenBalance(babyGhibliMint);
-    console.log(`Saldo de BabyGhibli detectado: ${babyGhibliBalance}`);
-    if (babyGhibliBalance > 0) {
-        const totalInvested = 0.158 + 0.04165;
-        const avgBuyPrice = totalInvested / babyGhibliBalance;
-        portfolio[babyGhibliMint] = {
-            buyPrice: avgBuyPrice,
-            amount: babyGhibliBalance,
-            lastPrice: avgBuyPrice,
-            decimals: 6,
-            initialSold: false,
-            investedSol: totalInvested
-        };
-        console.log(`Portfolio inicializado con ${babyGhibliBalance} BabyGhibli | Precio promedio: ${avgBuyPrice} SOL`);
-    } else {
-        console.log('No se detectaron BabyGhibli en la wallet');
-    }
 
     await updateVolatileTokens();
     await tradingBot();
