@@ -20,7 +20,7 @@ const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000; // $100,000
 const MAX_MARKET_CAP = 2000000; // $2,000,000
-const MIN_VOLUME = 200000; // $200,000 en 24h
+const MIN_VOLUME = 30000; // $30,000 en 24h
 const MIN_LIQUIDITY = 15000; // $15,000
 const MAX_AGE_DAYS = 2; // 2 días
 const INITIAL_TAKE_PROFIT = 1.20; // +20%
@@ -119,10 +119,19 @@ async function scanWalletForTokens() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=raydium');
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
+        // Log de los primeros 5 pares para inspección
+        console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
+            address: p.baseToken.address,
+            fdv: p.fdv,
+            volume24h: p.volume?.h24,
+            liquidity: p.liquidity?.usd,
+            ageDays: p.pairCreatedAt ? ((Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24)).toFixed(2) : 'N/A'
+        })));
+
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 200)) {
             if (
@@ -131,13 +140,14 @@ async function updateVolatileTokens() {
                 pair.baseToken.address === SOL_MINT ||
                 pair.dexId !== 'raydium'
             ) {
+                console.log(`Filtrado inicial: ${pair.baseToken.address} no es SOL-Raydium`);
                 continue;
             }
 
             const fdv = pair.fdv || 0;
             const volume24h = pair.volume?.h24 || 0;
             const liquidity = pair.liquidity?.usd || 0;
-            const ageDays = (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24);
+            const ageDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
 
             console.log(`Evaluando ${pair.baseToken.address}: FDV=${fdv}, Vol24h=${volume24h}, Liquidez=${liquidity}, Edad=${ageDays.toFixed(2)} días`);
 
