@@ -4,7 +4,7 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-const connection = new Connection('https://solana-mainnet.rpc.extrnode.com', 'confirmed');
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
@@ -13,9 +13,9 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.001;
-const FEE_RESERVE_SOL = 0.003;
-const CRITICAL_THRESHOLD_SOL = 0.0001;
+const MIN_TRADE_AMOUNT_SOL = 0.0005; // Reducido para operar con ~0.025 SOL
+const FEE_RESERVE_SOL = 0.0015; // Reducido para minimizar fees
+const CRITICAL_THRESHOLD_SOL = 0.00005; // Umbral crítico más bajo
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000;
@@ -24,7 +24,7 @@ const MIN_VOLUME = 25000;
 const MIN_LIQUIDITY = 5000;
 const INITIAL_TAKE_PROFIT = 1.15; // +15%
 const SCALE_SELL_PORTION = 0.25;
-const TARGET_INITIAL_SOL = 1;
+const TARGET_INITIAL_SOL = 0.05; // Meta ajustada a tu capital
 const MAX_AGE_DAYS = 7;
 const STOP_LOSS_THRESHOLD = 0.95; // -5%
 const MAX_HOLD_TIME = 60 * 60 * 1000; // 1 hora
@@ -32,7 +32,7 @@ const MAX_HOLD_TIME = 60 * 60 * 1000; // 1 hora
 let portfolio = {};
 let volatileTokens = [];
 let lastSoldToken = null;
-let purchaseHistory = {}; // Historial de compras
+let purchaseHistory = {};
 
 async function getTokenDecimals(mintPubKey) {
     try {
@@ -63,7 +63,7 @@ async function getTokenBalance(tokenMint, retries = 5) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const accountInfo = await connection.getAccountInfo(ata, 'confirmed');
-            if (!accountInfo) throw new Error('Cuenta no encontrada en la blockchain');
+            if (!accountInfo) return 0;
             const account = await getAccount(connection, ata, 'confirmed', { timeout: 15000 });
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
@@ -71,9 +71,6 @@ async function getTokenBalance(tokenMint, retries = 5) {
             return balance;
         } catch (error) {
             console.log(`Intento ${attempt} fallido: ${error.message}`);
-            if (error.name === 'TokenAccountNotFoundError' || error.message.includes('Cuenta no encontrada')) {
-                return 0;
-            }
             if (attempt === retries) return 0;
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
@@ -88,7 +85,7 @@ async function scanWalletForTokens() {
         console.log(`Cuentas encontradas: ${accounts.length}`);
         
         portfolio = {};
-        for (const { pubkey, account } of accounts) {
+        for (const { pubkey } of accounts) {
             const ata = pubkey.toBase58();
             const tokenAccountInfo = await getAccount(connection, pubkey);
             const mint = tokenAccountInfo.mint.toBase58();
@@ -134,7 +131,7 @@ async function updateVolatileTokens() {
                     await jupiterApi.quoteGet({
                         inputMint: SOL_MINT,
                         outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.001 * LAMPORTS_PER_SOL),
+                        amount: Math.floor(0.0005 * LAMPORTS_PER_SOL),
                         slippageBps: 1200
                     });
                     volatilePairs.push({
