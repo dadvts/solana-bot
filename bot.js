@@ -20,7 +20,7 @@ const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000; // $100,000
 const MAX_MARKET_CAP = 2000000; // $2,000,000
-const MIN_VOLUME = 300000; // $300,000 en 24h (~$50K en 4h)
+const MIN_VOLUME = 200000; // $200,000 en 24h
 const MIN_LIQUIDITY = 15000; // $15,000
 const MAX_AGE_DAYS = 2; // 2 días
 const INITIAL_TAKE_PROFIT = 1.20; // +20%
@@ -119,13 +119,18 @@ async function scanWalletForTokens() {
 async function updateVolatileTokens() {
     console.log('Actualizando tokens volátiles...');
     try {
-        const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=raydium');
+        const response = await axios.get('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
         const pairs = response.data.pairs || [];
-        const volatilePairs = [];
-        
         console.log(`Total de pares obtenidos: ${pairs.length}`);
-        for (const pair of pairs.slice(0, 200)) { // Aumentamos a 200 pares
-            if (pair.chainId !== 'solana' || pair.quoteToken.address !== SOL_MINT || pair.baseToken.address === SOL_MINT) {
+        
+        const volatilePairs = [];
+        for (const pair of pairs.slice(0, 200)) {
+            if (
+                pair.chainId !== 'solana' || 
+                pair.quoteToken.address !== SOL_MINT || 
+                pair.baseToken.address === SOL_MINT ||
+                pair.dexId !== 'raydium'
+            ) {
                 continue;
             }
 
