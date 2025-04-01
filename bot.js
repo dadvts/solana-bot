@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddress, getTokenAccountBalance, getAccount, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
@@ -20,7 +20,7 @@ const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000; // $100,000
 const MAX_MARKET_CAP = 2000000; // $2,000,000
-const MIN_VOLUME = 300000; // $300,000 en 24h (~$50,000 en 4h escalado)
+const MIN_VOLUME = 300000; // $300,000 en 24h (~$50K en 4h)
 const MIN_LIQUIDITY = 15000; // $15,000
 const MAX_AGE_DAYS = 2; // 2 días
 const INITIAL_TAKE_PROFIT = 1.20; // +20%
@@ -62,20 +62,9 @@ async function getTokenBalance(tokenMint, retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            let balance;
-            try {
-                const balanceInfo = await getTokenAccountBalance(connection, ata, 'confirmed');
-                balance = Number(balanceInfo.value.amount) / (10 ** balanceInfo.value.decimals);
-            } catch (e) {
-                if (e.message.includes('getTokenAccountBalance')) {
-                    console.log('getTokenAccountBalance falló, usando getAccount como respaldo');
-                    const account = await getAccount(connection, ata, 'confirmed');
-                    const decimals = await getTokenDecimals(tokenMint);
-                    balance = Number(account.amount) / (10 ** decimals);
-                } else {
-                    throw e;
-                }
-            }
+            const account = await getAccount(connection, ata, 'confirmed');
+            const decimals = await getTokenDecimals(tokenMint);
+            const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
@@ -133,16 +122,26 @@ async function updateVolatileTokens() {
         const response = await axios.get('https://api.dexscreener.com/latest/dex/search?q=raydium');
         const pairs = response.data.pairs || [];
         const volatilePairs = [];
-        for (const pair of pairs.slice(0, 100)) {
+        
+        console.log(`Total de pares obtenidos: ${pairs.length}`);
+        for (const pair of pairs.slice(0, 200)) { // Aumentamos a 200 pares
+            if (pair.chainId !== 'solana' || pair.quoteToken.address !== SOL_MINT || pair.baseToken.address === SOL_MINT) {
+                continue;
+            }
+
+            const fdv = pair.fdv || 0;
+            const volume24h = pair.volume?.h24 || 0;
+            const liquidity = pair.liquidity?.usd || 0;
+            const ageDays = (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24);
+
+            console.log(`Evaluando ${pair.baseToken.address}: FDV=${fdv}, Vol24h=${volume24h}, Liquidez=${liquidity}, Edad=${ageDays.toFixed(2)} días`);
+
             if (
-                pair.chainId === 'solana' && 
-                pair.quoteToken.address === SOL_MINT && 
-                pair.baseToken.address !== SOL_MINT &&
-                pair.fdv >= MIN_MARKET_CAP && 
-                pair.fdv <= MAX_MARKET_CAP && 
-                pair.volume.h24 >= MIN_VOLUME && 
-                pair.liquidity.usd >= MIN_LIQUIDITY &&
-                ((Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24)) <= MAX_AGE_DAYS
+                fdv >= MIN_MARKET_CAP && 
+                fdv <= MAX_MARKET_CAP && 
+                volume24h >= MIN_VOLUME && 
+                liquidity >= MIN_LIQUIDITY && 
+                ageDays <= MAX_AGE_DAYS
             ) {
                 try {
                     await jupiterApi.quoteGet({
@@ -153,13 +152,17 @@ async function updateVolatileTokens() {
                     });
                     volatilePairs.push({
                         address: pair.baseToken.address,
-                        volume24h: pair.volume.h24
+                        volume24h: volume24h
                     });
+                    console.log(`Token viable: ${pair.baseToken.address}`);
                 } catch (error) {
                     console.log(`Token ${pair.baseToken.address} no comerciable en Jupiter: ${error.message}`);
                 }
+            } else {
+                console.log(`Rechazado: ${pair.baseToken.address} no cumple criterios`);
             }
         }
+        
         volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
         volatileTokens = volatilePairs.slice(0, 5).map(t => t.address);
         console.log('Lista actualizada:', volatileTokens);
