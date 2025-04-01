@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddress, getTokenAccountBalance, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
@@ -18,14 +18,14 @@ const FEE_RESERVE_SOL = 0.0015;
 const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
-const MIN_MARKET_CAP = 100000;
-const MAX_MARKET_CAP = 500000000;
-const MIN_VOLUME = 25000;
-const MIN_LIQUIDITY = 5000;
+const MIN_MARKET_CAP = 100000; // $100,000
+const MAX_MARKET_CAP = 2000000; // $2,000,000
+const MIN_VOLUME = 300000; // $300,000 en 24h (~$50,000 en 4h escalado)
+const MIN_LIQUIDITY = 15000; // $15,000
+const MAX_AGE_DAYS = 2; // 2 días
 const INITIAL_TAKE_PROFIT = 1.20; // +20%
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
-const MAX_AGE_DAYS = 7;
 const STOP_LOSS_THRESHOLD = 0.95; // -5%
 const MAX_HOLD_TIME = 60 * 60 * 1000; // 1 hora
 
@@ -62,22 +62,16 @@ async function getTokenBalance(tokenMint, retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            const accountInfo = await connection.getAccountInfo(ata, 'confirmed');
-            if (!accountInfo) {
-                console.log(`ATA ${ata.toBase58()} no existe`);
-                return 0;
-            }
-            const account = await getAccount(connection, ata, 'confirmed', { timeout: 15000 });
-            if (!account || typeof account.amount === 'undefined') {
-                console.log(`Datos de cuenta inválidos para ${tokenMint}`);
-                return 0;
-            }
-            const decimals = await getTokenDecimals(tokenMint);
-            const balance = Number(account.amount) / (10 ** decimals);
+            const balanceInfo = await getTokenAccountBalance(connection, ata, 'confirmed');
+            const balance = Number(balanceInfo.value.amount) / (10 ** balanceInfo.value.decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
             console.log(`Intento ${attempt} fallido: ${error.message}`);
+            if (error.message.includes('TokenAccountNotFoundError') || error.message.includes('Account not found')) {
+                console.log(`ATA ${ata.toBase58()} no existe o está vacía`);
+                return 0;
+            }
             if (attempt === retries) {
                 console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
                 return 0;
@@ -97,8 +91,9 @@ async function scanWalletForTokens() {
         portfolio = {};
         for (const { pubkey } of accounts) {
             const ata = pubkey.toBase58();
-            const tokenAccountInfo = await getAccount(connection, pubkey);
-            const mint = tokenAccountInfo.mint.toBase58();
+            const tokenAccountInfo = await connection.getAccountInfo(pubkey, 'confirmed');
+            if (!tokenAccountInfo) continue;
+            const mint = new PublicKey(tokenAccountInfo.data.slice(0, 32)).toBase58();
             const balance = await getTokenBalance(mint);
             if (balance > 0) {
                 const decimals = await getTokenDecimals(mint);
@@ -148,7 +143,9 @@ async function updateVolatileTokens() {
                         address: pair.baseToken.address,
                         volume24h: pair.volume.h24
                     });
-                } catch (error) {}
+                } catch (error) {
+                    console.log(`Token ${pair.baseToken.address} no comerciable en Jupiter: ${error.message}`);
+                }
             }
         }
         volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
