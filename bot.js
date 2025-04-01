@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddress, getTokenAccountBalance, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddress, getTokenAccountBalance, getAccount, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
@@ -62,8 +62,20 @@ async function getTokenBalance(tokenMint, retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            const balanceInfo = await getTokenAccountBalance(connection, ata, 'confirmed');
-            const balance = Number(balanceInfo.value.amount) / (10 ** balanceInfo.value.decimals);
+            let balance;
+            try {
+                const balanceInfo = await getTokenAccountBalance(connection, ata, 'confirmed');
+                balance = Number(balanceInfo.value.amount) / (10 ** balanceInfo.value.decimals);
+            } catch (e) {
+                if (e.message.includes('getTokenAccountBalance')) {
+                    console.log('getTokenAccountBalance falló, usando getAccount como respaldo');
+                    const account = await getAccount(connection, ata, 'confirmed');
+                    const decimals = await getTokenDecimals(tokenMint);
+                    balance = Number(account.amount) / (10 ** decimals);
+                } else {
+                    throw e;
+                }
+            }
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
