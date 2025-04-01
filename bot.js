@@ -13,18 +13,18 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0005; // Reducido para operar con ~0.025 SOL
-const FEE_RESERVE_SOL = 0.0015; // Reducido para minimizar fees
-const CRITICAL_THRESHOLD_SOL = 0.00005; // Umbral crítico más bajo
+const MIN_TRADE_AMOUNT_SOL = 0.0005;
+const FEE_RESERVE_SOL = 0.0015;
+const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000;
 const MAX_MARKET_CAP = 500000000;
 const MIN_VOLUME = 25000;
 const MIN_LIQUIDITY = 5000;
-const INITIAL_TAKE_PROFIT = 1.15; // +15%
+const INITIAL_TAKE_PROFIT = 1.20; // +20%
 const SCALE_SELL_PORTION = 0.25;
-const TARGET_INITIAL_SOL = 0.05; // Meta ajustada a tu capital
+const TARGET_INITIAL_SOL = 0.05;
 const MAX_AGE_DAYS = 7;
 const STOP_LOSS_THRESHOLD = 0.95; // -5%
 const MAX_HOLD_TIME = 60 * 60 * 1000; // 1 hora
@@ -63,15 +63,25 @@ async function getTokenBalance(tokenMint, retries = 5) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const accountInfo = await connection.getAccountInfo(ata, 'confirmed');
-            if (!accountInfo) return 0;
+            if (!accountInfo) {
+                console.log(`ATA ${ata.toBase58()} no existe`);
+                return 0;
+            }
             const account = await getAccount(connection, ata, 'confirmed', { timeout: 15000 });
+            if (!account || typeof account.amount === 'undefined') {
+                console.log(`Datos de cuenta inválidos para ${tokenMint}`);
+                return 0;
+            }
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
             console.log(`Intento ${attempt} fallido: ${error.message}`);
-            if (attempt === retries) return 0;
+            if (attempt === retries) {
+                console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
+                return 0;
+            }
             await new Promise(resolve => setTimeout(resolve, 2000));
         }
     }
