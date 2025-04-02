@@ -4,7 +4,6 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-// Cambiar a un RPC que sabemos que funcionaba
 const connection = new Connection('https://solana-mainnet.rpc.extrnode.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
