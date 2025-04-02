@@ -403,13 +403,4 @@ async function startBot() {
     const solBalance = await getWalletBalanceSol();
     tradingCapitalSol = solBalance;
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
-    console.log('Dirección de la wallet:', walletPubKey.toBase58());
-
-    await updateVolatileTokens();
-    await scanWalletForTokens();
-    await tradingBot();
-    setInterval(tradingBot, CYCLE_INTERVAL);
-    setInterval(updateVolatileTokens, UPDATE_INTERVAL);
-}
-
-startBot();
+    console.log('Dirección de la wallet:', walletPubKey.toBase...
