@@ -4,7 +4,8 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+// Cambiar a un RPC que sabemos que funcionaba
+const connection = new Connection('https://solana-mainnet.rpc.extrnode.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
@@ -63,12 +64,14 @@ async function getTokenBalance(tokenMint, retries = 5) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const account = await getAccount(connection, ata, 'confirmed');
+            console.log(`Datos de cuenta: ${JSON.stringify(account)}`);
+            if (!account.amount) throw new Error('No se encontró amount en la cuenta');
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido: ${error.message}`);
+            console.log(`Intento ${attempt} fallido: ${error.name} | ${error.message}`);
             if (error.message.includes('TokenAccountNotFoundError') || error.message.includes('Account not found')) {
                 console.log(`ATA ${ata.toBase58()} no existe o está vacía`);
                 return 0;
@@ -95,6 +98,7 @@ async function scanWalletForTokens() {
             const tokenAccountInfo = await connection.getAccountInfo(pubkey, 'confirmed');
             if (!tokenAccountInfo) continue;
             const mint = new PublicKey(tokenAccountInfo.data.slice(0, 32)).toBase58();
+            console.log(`Procesando ATA ${ata} para mint ${mint}`);
             const balance = await getTokenBalance(mint);
             if (balance > 0) {
                 const decimals = await getTokenDecimals(mint);
@@ -123,14 +127,13 @@ async function updateVolatileTokens() {
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
-        // Log de los primeros 5 pares para inspección
         console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
             address: p.baseToken.address,
             fdv: p.fdv,
             volume24h: p.volume?.h24,
             liquidity: p.liquidity?.usd,
             ageDays: p.pairCreatedAt ? ((Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24)).toFixed(2) : 'N/A'
-        }));
+        })));
 
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 200)) {
@@ -344,6 +347,7 @@ async function syncPortfolio() {
 async function tradingBot() {
     console.log('Ciclo de trading...');
     const realBalanceSol = await getWalletBalanceSol();
+    console.log(`Saldo real: ${realBalanceSol} SOL | Capital: ${tradingCapitalSol} SOL | Guardado: ${savedSol} SOL`);
     tradingCapitalSol = realBalanceSol;
 
     await syncPortfolio();
@@ -387,13 +391,13 @@ async function tradingBot() {
     }
 
     if (Object.keys(portfolio).length === 0 && tradingCapitalSol >= MIN_TRADE_AMOUNT_SOL + FEE_RESERVE_SOL) {
-        await updateVolatileTokens();
         const bestToken = await selectBestToken();
         if (bestToken) await buyToken(bestToken.token, tradingCapitalSol - FEE_RESERVE_SOL);
-        else console.log('No se encontraron tokens viables');
+        else console.log('No se encontraron tokens viables para comprar');
     } else {
-        console.log('Capital insuficiente o cartera activa');
+        console.log('Capital insuficiente para comprar más');
     }
+    console.log('Ciclo completado.');
 }
 
 async function startBot() {
@@ -402,8 +406,8 @@ async function startBot() {
     console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
     console.log('Dirección de la wallet:', walletPubKey.toBase58());
 
-    await scanWalletForTokens();
     await updateVolatileTokens();
+    await scanWalletForTokens();
     await tradingBot();
     setInterval(tradingBot, CYCLE_INTERVAL);
     setInterval(updateVolatileTokens, UPDATE_INTERVAL);
