@@ -126,6 +126,7 @@ async function updateVolatileTokens() {
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
+        // Línea corregida con solo 2 paréntesis de cierre
         console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
             address: p.baseToken.address,
             fdv: p.fdv,
