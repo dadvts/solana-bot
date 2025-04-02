@@ -126,13 +126,14 @@ async function updateVolatileTokens() {
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
+        // Corrección: Solo 2 paréntesis de cierre
         console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
             address: p.baseToken.address,
             fdv: p.fdv,
             volume24h: p.volume?.h24,
             liquidity: p.liquidity?.usd,
             ageDays: p.pairCreatedAt ? ((Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24)).toFixed(2) : 'N/A'
-        })));
+        }))));
 
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 200)) {
