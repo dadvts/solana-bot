@@ -4,7 +4,8 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-const connection = new Connection('https://solana-mainnet.rpc.extrnode.com', 'confirmed');
+// Cambiar a RPC público gratuito
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
@@ -22,7 +23,7 @@ const MIN_MARKET_CAP = 100000; // $100,000
 const MAX_MARKET_CAP = 2000000; // $2,000,000
 const MIN_VOLUME = 30000; // $30,000 en 24h
 const MIN_LIQUIDITY = 15000; // $15,000
-const MAX_AGE_DAYS = 2; // 2 días
+const MAX_AGE_DAYS = 30; // Aumentado a 30 días para pruebas
 const INITIAL_TAKE_PROFIT = 1.20; // +20%
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
@@ -126,14 +127,13 @@ async function updateVolatileTokens() {
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
-        // Corrección: Solo 2 paréntesis de cierre
         console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
             address: p.baseToken.address,
             fdv: p.fdv,
             volume24h: p.volume?.h24,
             liquidity: p.liquidity?.usd,
             ageDays: p.pairCreatedAt ? ((Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24)).toFixed(2) : 'N/A'
-        }))));
+        })));
 
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 200)) {
