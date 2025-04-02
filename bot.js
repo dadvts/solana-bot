@@ -4,7 +4,6 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-// Cambiar a RPC público gratuito
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -23,7 +22,7 @@ const MIN_MARKET_CAP = 100000; // $100,000
 const MAX_MARKET_CAP = 2000000; // $2,000,000
 const MIN_VOLUME = 30000; // $30,000 en 24h
 const MIN_LIQUIDITY = 15000; // $15,000
-const MAX_AGE_DAYS = 30; // Aumentado a 30 días para pruebas
+const MAX_AGE_DAYS = 30; // Aumentado a 30 días
 const INITIAL_TAKE_PROFIT = 1.20; // +20%
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
@@ -150,7 +149,7 @@ async function updateVolatileTokens() {
             const fdv = pair.fdv || 0;
             const volume24h = pair.volume?.h24 || 0;
             const liquidity = pair.liquidity?.usd || 0;
-            const ageDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
+            const ageDays = pair.pairCreatedAt ? (Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
 
             console.log(`Evaluando ${pair.baseToken.address}: FDV=${fdv}, Vol24h=${volume24h}, Liquidez=${liquidity}, Edad=${ageDays.toFixed(2)} días`);
 
