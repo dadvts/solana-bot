@@ -126,7 +126,6 @@ async function updateVolatileTokens() {
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
-        // Línea corregida con solo 2 paréntesis de cierre
         console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
             address: p.baseToken.address,
             fdv: p.fdv,
@@ -150,7 +149,7 @@ async function updateVolatileTokens() {
             const fdv = pair.fdv || 0;
             const volume24h = pair.volume?.h24 || 0;
             const liquidity = pair.liquidity?.usd || 0;
-            const ageDays = pair.pairCreatedAt ? (Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
+            const ageDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
 
             console.log(`Evaluando ${pair.baseToken.address}: FDV=${fdv}, Vol24h=${volume24h}, Liquidez=${liquidity}, Edad=${ageDays.toFixed(2)} días`);
 
