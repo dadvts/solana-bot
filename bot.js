@@ -132,7 +132,7 @@ async function updateVolatileTokens() {
             volume24h: p.volume?.h24,
             liquidity: p.liquidity?.usd,
             ageDays: p.pairCreatedAt ? ((Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24)).toFixed(2) : 'N/A'
-        })));
+        }))));
 
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 200)) {
@@ -413,3 +413,4 @@ async function startBot() {
 }
 
 startBot();
+
