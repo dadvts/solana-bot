@@ -13,21 +13,22 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.001; // Aumentado a 0.001 SOL
-const FEE_RESERVE_SOL = 0.005; // Aumentado a 0.005 SOL
+const MIN_TRADE_AMOUNT_SOL = 0.0005; // Reducido
+const FEE_RESERVE_SOL = 0.001; // Reducido
 const CRITICAL_THRESHOLD_SOL = 0.00005;
-const CYCLE_INTERVAL = 30000; // 30s
+const CYCLE_INTERVAL = 5000; // 5s
 const UPDATE_INTERVAL = 180000; // 3min
 const MIN_MARKET_CAP = 100000; // $100,000
 const MAX_MARKET_CAP = 2000000; // $2,000,000
 const MIN_VOLUME = 30000; // $30,000 en 24h
 const MIN_LIQUIDITY = 15000; // $15,000
-const MAX_AGE_DAYS = 30; // Aumentado a 30 días
-const INITIAL_TAKE_PROFIT = 1.20; // +20%
+const MAX_AGE_DAYS = 3; // Reducido a 3 días
+const INITIAL_TAKE_PROFIT = 1.05; // +5%
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
-const STOP_LOSS_THRESHOLD = 0.95; // -5%
-const MAX_HOLD_TIME = 60 * 60 * 1000; // 1 hora
+const STOP_LOSS_THRESHOLD = 0.98; // -2%
+const MAX_HOLD_TIME = 15 * 60 * 1000; // 15 minutos
+const DUST_THRESHOLD = 0.001; // Ignorar saldos menores a esto
 
 let portfolio = {};
 let volatileTokens = [];
@@ -55,7 +56,7 @@ async function getWalletBalanceSol() {
 }
 
 async function getTokenBalance(tokenMint, retries = 5) {
-    const mintPubKey = new PublicKey(tokenMint);
+    const mint WpubKey = new PublicKey(tokenMint);
     const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
     console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint}`);
 
@@ -99,7 +100,7 @@ async function scanWalletForTokens() {
             const mint = new PublicKey(tokenAccountInfo.data.slice(0, 32)).toBase58();
             console.log(`Procesando ATA ${ata} para mint ${mint}`);
             const balance = await getTokenBalance(mint);
-            if (balance > 0) {
+            if (balance > DUST_THRESHOLD) { // Ignorar polvo
                 const decimals = await getTokenDecimals(mint);
                 const price = (await getTokenPrice(mint)) || 0.000001;
                 portfolio[mint] = {
@@ -126,14 +127,6 @@ async function updateVolatileTokens() {
         const pairs = response.data.pairs || [];
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
-        console.log('Primeros 5 pares:', JSON.stringify(pairs.slice(0, 5).map(p => ({
-            address: p.baseToken.address,
-            fdv: p.fdv,
-            volume24h: p.volume?.h24,
-            liquidity: p.liquidity?.usd,
-            ageDays: p.pairCreatedAt ? ((Date.now() - p.pairCreatedAt) / (1000 * 60 * 60 * 24)).toFixed(2) : 'N/A'
-        }))));
-
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 200)) {
             if (
@@ -141,17 +134,12 @@ async function updateVolatileTokens() {
                 pair.quoteToken.address !== SOL_MINT || 
                 pair.baseToken.address === SOL_MINT ||
                 pair.dexId !== 'raydium'
-            ) {
-                console.log(`Filtrado inicial: ${pair.baseToken.address} no es SOL-Raydium`);
-                continue;
-            }
+            ) continue;
 
             const fdv = pair.fdv || 0;
             const volume24h = pair.volume?.h24 || 0;
             const liquidity = pair.liquidity?.usd || 0;
             const ageDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
-
-            console.log(`Evaluando ${pair.baseToken.address}: FDV=${fdv}, Vol24h=${volume24h}, Liquidez=${liquidity}, Edad=${ageDays.toFixed(2)} días`);
 
             if (
                 fdv >= MIN_MARKET_CAP && 
@@ -169,20 +157,18 @@ async function updateVolatileTokens() {
                     });
                     volatilePairs.push({
                         address: pair.baseToken.address,
-                        volume24h: volume24h
+                        ageDays: ageDays
                     });
-                    console.log(`Token viable: ${pair.baseToken.address}`);
+                    console.log(`Token viable: ${pair.baseToken.address} | Edad: ${ageDays.toFixed(2)} días`);
                 } catch (error) {
                     console.log(`Token ${pair.baseToken.address} no comerciable en Jupiter: ${error.message}`);
                 }
-            } else {
-                console.log(`Rechazado: ${pair.baseToken.address} no cumple criterios`);
             }
         }
         
-        volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
+        volatilePairs.sort((a, b) => a.ageDays - b.ageDays); // Más nuevos primero
         volatileTokens = volatilePairs.slice(0, 5).map(t => t.address);
-        console.log('Lista actualizada:', volatileTokens);
+        console.log('Lista actualizada (más nuevos):', volatileTokens);
     } catch (error) {
         console.log('Error DexScreener:', error.message);
         volatileTokens = [];
@@ -285,6 +271,12 @@ async function sellToken(tokenPubKey, portion = 1) {
     const { buyPrice, amount, decimals } = portfolio[tokenMint];
     const sellAmount = (await getTokenBalance(tokenMint)) * portion;
 
+    if (sellAmount < DUST_THRESHOLD) {
+        console.log(`Ignorando venta de ${tokenMint}: cantidad (${sellAmount}) menor al umbral de polvo`);
+        delete portfolio[tokenMint];
+        return 0;
+    }
+
     try {
         const quote = await jupiterApi.quoteGet({
             inputMint: tokenMint,
@@ -313,7 +305,7 @@ async function sellToken(tokenPubKey, portion = 1) {
         if (!confirmation.value.err) {
             console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
             portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
-            if (portfolio[tokenMint].amount === 0) {
+            if (portfolio[tokenMint].amount < DUST_THRESHOLD) {
                 lastSoldToken = tokenMint;
                 delete portfolio[tokenMint];
             } else if (portion < 1) {
@@ -348,8 +340,8 @@ async function syncPortfolio() {
     const existingTokens = Object.keys(portfolio);
     for (const token of existingTokens) {
         const balance = await getTokenBalance(token);
-        if (balance === 0) {
-            console.log(`Eliminando ${token} del portfolio: saldo 0`);
+        if (balance < DUST_THRESHOLD) {
+            console.log(`Eliminando ${token} del portfolio: saldo ${balance} menor al umbral de polvo`);
             delete portfolio[token];
         } else {
             portfolio[token].amount = balance;
@@ -405,12 +397,17 @@ async function tradingBot() {
         }
     }
 
-    if (Object.keys(portfolio).length === 0 && tradingCapitalSol >= MIN_TRADE_AMOUNT_SOL + FEE_RESERVE_SOL) {
+    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL;
+    if (Object.keys(portfolio).length === 0 && availableCapital >= MIN_TRADE_AMOUNT_SOL) {
         const bestToken = await selectBestToken();
-        if (bestToken) await buyToken(bestToken.token, tradingCapitalSol - FEE_RESERVE_SOL);
-        else console.log('No se encontraron tokens viables para comprar');
+        if (bestToken) {
+            console.log(`Comprando token: ${bestToken.token.toBase58()} con ${availableCapital} SOL`);
+            await buyToken(bestToken.token, availableCapital);
+        } else {
+            console.log('No se encontraron tokens viables para comprar');
+        }
     } else {
-        console.log('Capital insuficiente para comprar más');
+        console.log(`No se puede comprar: Portfolio no vacío (${Object.keys(portfolio).length}) o capital insuficiente (${availableCapital} SOL)`);
     }
     console.log('Ciclo completado.');
 }
