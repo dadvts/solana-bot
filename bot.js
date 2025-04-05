@@ -13,8 +13,8 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0005;
-const FEE_RESERVE_SOL = 0.003; // Aumentado a 0.003 SOL para cubrir creación de ATA y fees
+const MIN_TRADE_AMOUNT_SOL = 0.001; // Aumentado a 0.001 SOL
+const FEE_RESERVE_SOL = 0.005; // Aumentado a 0.005 SOL
 const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
@@ -63,10 +63,10 @@ async function getTokenBalance(tokenMint, retries = 5) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const account = await getAccount(connection, ata, 'confirmed');
-            console.log(`Datos de cuenta: amount=${account.amount.toString()}, decimals=${account.decimals}`);
-            if (!account.amount) throw new Error('No se encontró amount en la cuenta');
+            const amount = account.amount; // BigInt
+            console.log(`Datos de cuenta: amount=${amount.toString()}`);
             const decimals = await getTokenDecimals(tokenMint);
-            const balance = Number(account.amount) / (10 ** decimals);
+            const balance = Number(amount) / (10 ** decimals);
             console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
             return balance;
         } catch (error) {
@@ -164,7 +164,7 @@ async function updateVolatileTokens() {
                     await jupiterApi.quoteGet({
                         inputMint: SOL_MINT,
                         outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.0005 * LAMPORTS_PER_SOL),
+                        amount: Math.floor(0.001 * LAMPORTS_PER_SOL),
                         slippageBps: 1200
                     });
                     volatilePairs.push({
@@ -228,7 +228,8 @@ async function buyToken(tokenPubKey, amountPerTrade) {
     try {
         const solBalance = await getWalletBalanceSol();
         console.log(`Saldo disponible: ${solBalance} SOL`);
-        const tradeAmount = Math.min(amountPerTrade, solBalance - FEE_RESERVE_SOL);
+        const maxTradeAmount = solBalance - FEE_RESERVE_SOL;
+        const tradeAmount = Math.min(amountPerTrade, maxTradeAmount, 0.01);
         console.log(`Monto calculado para trading: ${tradeAmount} SOL (reserva: ${FEE_RESERVE_SOL} SOL)`);
         if (tradeAmount < MIN_TRADE_AMOUNT_SOL) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
         if (solBalance < FEE_RESERVE_SOL + MIN_TRADE_AMOUNT_SOL) throw new Error(`Saldo total insuficiente: ${solBalance} SOL`);
@@ -243,16 +244,22 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         const tokenAmount = quote.outAmount / (10 ** decimals);
         const buyPrice = tradeAmount / tokenAmount;
 
+        const recentBlockhash = await connection.getLatestBlockhash('confirmed');
         const swapRequest = {
             quoteResponse: quote,
             userPublicKey: walletPubKey.toBase58(),
-            wrapAndUnwrapSol: true
+            wrapAndUnwrapSol: true,
+            recentBlockhash: recentBlockhash.blockhash
         };
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
         const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
-        const confirmation = await connection.confirmTransaction(txid, 'confirmed', { timeout: 60000 });
+        const confirmation = await connection.confirmTransaction({
+            signature: txid,
+            blockhash: recentBlockhash.blockhash,
+            lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
+        }, 'confirmed', { timeout: 60000 });
         if (!confirmation.value.err) {
             const balance = await getTokenBalance(tokenMint);
             portfolio[tokenMint] = {
@@ -287,16 +294,22 @@ async function sellToken(tokenPubKey, portion = 1) {
         });
         const solReceived = quote.outAmount / LAMPORTS_PER_SOL;
 
+        const recentBlockhash = await connection.getLatestBlockhash('confirmed');
         const swapRequest = {
             quoteResponse: quote,
             userPublicKey: walletPubKey.toBase58(),
-            wrapAndUnwrapSol: true
+            wrapAndUnwrapSol: true,
+            recentBlockhash: recentBlockhash.blockhash
         };
         const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
         const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
         transaction.sign([keypair]);
         const txid = await connection.sendRawTransaction(transaction.serialize());
-        const confirmation = await connection.confirmTransaction(txid, 'confirmed', { timeout: 60000 });
+        const confirmation = await connection.confirmTransaction({
+            signature: txid,
+            blockhash: recentBlockhash.blockhash,
+            lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
+        }, 'confirmed', { timeout: 60000 });
         if (!confirmation.value.err) {
             console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
             portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
