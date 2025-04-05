@@ -14,7 +14,7 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 let tradingCapitalSol = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT_SOL = 0.0005;
-const FEE_RESERVE_SOL = 0.0015;
+const FEE_RESERVE_SOL = 0.003; // Aumentado a 0.003 SOL para cubrir creación de ATA y fees
 const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 30000; // 30s
 const UPDATE_INTERVAL = 180000; // 3min
@@ -63,7 +63,7 @@ async function getTokenBalance(tokenMint, retries = 5) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const account = await getAccount(connection, ata, 'confirmed');
-            console.log(`Datos de cuenta: ${JSON.stringify(account)}`);
+            console.log(`Datos de cuenta: amount=${account.amount.toString()}, decimals=${account.decimals}`);
             if (!account.amount) throw new Error('No se encontró amount en la cuenta');
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(account.amount) / (10 ** decimals);
@@ -227,8 +227,11 @@ async function buyToken(tokenPubKey, amountPerTrade) {
     purchaseHistory[tokenMint] = (purchaseHistory[tokenMint] || 0) + 1;
     try {
         const solBalance = await getWalletBalanceSol();
+        console.log(`Saldo disponible: ${solBalance} SOL`);
         const tradeAmount = Math.min(amountPerTrade, solBalance - FEE_RESERVE_SOL);
+        console.log(`Monto calculado para trading: ${tradeAmount} SOL (reserva: ${FEE_RESERVE_SOL} SOL)`);
         if (tradeAmount < MIN_TRADE_AMOUNT_SOL) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
+        if (solBalance < FEE_RESERVE_SOL + MIN_TRADE_AMOUNT_SOL) throw new Error(`Saldo total insuficiente: ${solBalance} SOL`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
         const quote = await jupiterApi.quoteGet({
@@ -413,4 +416,3 @@ async function startBot() {
 }
 
 startBot();
-
