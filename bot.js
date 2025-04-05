@@ -56,7 +56,7 @@ async function getWalletBalanceSol() {
 }
 
 async function getTokenBalance(tokenMint, retries = 5) {
-    const mint WpubKey = new PublicKey(tokenMint);
+    const mintPubKey = new PublicKey(tokenMint);
     const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
     console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint}`);
 
