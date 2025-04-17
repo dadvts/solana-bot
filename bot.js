@@ -17,12 +17,12 @@ const STABLECOINS = [
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.01;
+const MIN_TRADE_AMOUNT_SOL = 0.005; // Temporal para desbloquear trades
 const FEE_RESERVE_SOL = 0.001;
 const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 5000;
 const UPDATE_INTERVAL = 180000;
-const MIN_MARKET_CAP = 100000;
+const MIN_MARKET_CAP = 30000; // Reducido para incluir tokens más pequeños
 const MAX_MARKET_CAP = 2000000;
 const MIN_VOLUME = 30000;
 const MIN_LIQUIDITY = 15000;
@@ -33,6 +33,7 @@ const TARGET_INITIAL_SOL = 0.05;
 const STOP_LOSS_THRESHOLD = 0.98;
 const MAX_HOLD_TIME = 15 * 60 * 1000;
 const DUST_THRESHOLD = 0.001;
+const MAX_PURCHASES_PER_TOKEN = 2; // Nuevo límite de compras por token
 
 let portfolio = {};
 let volatileTokens = [];
@@ -168,7 +169,7 @@ async function updateVolatileTokens() {
                         inputMint: SOL_MINT,
                         outputMint: pair.baseToken.address,
                         amount: Math.floor(0.001 * LAMPORTS_PER_SOL),
-                        slippageBps: 1200
+                        slippageBps: 2000
                     });
                     volatilePairs.push({
                         address: pair.baseToken.address,
@@ -200,7 +201,7 @@ async function selectBestToken() {
             tokenMint === SOL_MINT || 
             tokenMint === lastSoldToken || 
             portfolio[tokenMint] || 
-            (purchaseHistory[tokenMint] || 0) >= 2 ||
+            (purchaseHistory[tokenMint] || 0) >= MAX_PURCHASES_PER_TOKEN ||
             STABLECOINS.includes(tokenMint)
         ) continue;
         try {
@@ -209,7 +210,7 @@ async function selectBestToken() {
                 inputMint: SOL_MINT,
                 outputMint: tokenMint,
                 amount: Math.floor(availableCapital * LAMPORTS_PER_SOL),
-                slippageBps: 1200
+                slippageBps: 2000
             });
             const tokenAmount = quote.outAmount / (10 ** decimals);
             const returnPerSol = tokenAmount / availableCapital;
@@ -241,7 +242,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             inputMint: SOL_MINT,
             outputMint: tokenMint,
             amount: Math.floor(tradeAmount * LAMPORTS_PER_SOL),
-            slippageBps: 1200
+            slippageBps: 2000
         });
         const tokenAmount = quote.outAmount / (10 ** decimals);
         const buyPrice = tradeAmount / tokenAmount;
@@ -299,6 +300,7 @@ async function sellToken(tokenPubKey, portion = 1) {
     if (sellAmount < DUST_THRESHOLD) {
         console.log(`Ignorando venta de ${tokenMint}: cantidad (${sellAmount}) menor al umbral de polvo`);
         delete portfolio[tokenMint];
+        purchaseHistory[tokenMint] = 0; // Reiniciar tras venta automática
         return 0;
     }
 
@@ -307,7 +309,7 @@ async function sellToken(tokenPubKey, portion = 1) {
             inputMint: tokenMint,
             outputMint: SOL_MINT,
             amount: Math.floor(sellAmount * (10 ** decimals)),
-            slippageBps: 1200
+            slippageBps: 2000
         });
         const solReceived = quote.outAmount / LAMPORTS_PER_SOL;
 
@@ -333,6 +335,7 @@ async function sellToken(tokenPubKey, portion = 1) {
             if (portfolio[tokenMint].amount < DUST_THRESHOLD) {
                 lastSoldToken = tokenMint;
                 delete portfolio[tokenMint];
+                purchaseHistory[tokenMint] = 0; // Reiniciar tras venta automática
             } else if (portion < 1) {
                 portfolio[tokenMint].initialSold = true;
             }
@@ -352,7 +355,7 @@ async function getTokenPrice(tokenMint) {
             inputMint: tokenMint,
             outputMint: SOL_MINT,
             amount: 10 ** decimals,
-            slippageBps: 1200
+            slippageBps: 2000
         });
         return quote.outAmount / LAMPORTS_PER_SOL;
     } catch (error) {
@@ -368,6 +371,7 @@ async function syncPortfolio() {
         if (balance < DUST_THRESHOLD) {
             console.log(`Eliminando ${token} del portfolio: saldo ${balance} menor al umbral de polvo`);
             delete portfolio[token];
+            purchaseHistory[tokenMint] = 0; // Reiniciar tras eliminación automática
         } else {
             portfolio[token].amount = balance;
             portfolio[token].lastPrice = (await getTokenPrice(token)) || portfolio[token].lastPrice;
@@ -380,7 +384,7 @@ async function tradingBot() {
     console.log('Ciclo de trading...');
     const realBalanceSol = await getWalletBalanceSol();
     console.log(`Saldo real: ${realBalanceSol} SOL | Capital: ${tradingCapitalSol} SOL | Guardado: ${savedSol} SOL`);
-    tradingCapitalSol = realBalanceSol;
+    tradingCapitalSol = realBalanceSol; // Sincronizar siempre con el saldo real
 
     await syncPortfolio();
 
