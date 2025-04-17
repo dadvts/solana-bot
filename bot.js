@@ -39,13 +39,19 @@ let volatileTokens = [];
 let lastSoldToken = null;
 let purchaseHistory = {};
 
-async function getTokenDecimals(mintPubKey) {
-    try {
-        const mint = await getMint(connection, new PublicKey(mintPubKey));
-        return mint.decimals;
-    } catch (error) {
-        console.log(`Error obteniendo decimales de ${mintPubKey}: ${error.message}`);
-        return 6;
+async function getTokenDecimals(mintPubKey, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const mint = await getMint(connection, new PublicKey(mintPubKey));
+            return mint.decimals;
+        } catch (error) {
+            console.log(`Intento ${attempt} fallido obteniendo decimales de ${mintPubKey}: ${error.message}`);
+            if (attempt === retries) {
+                console.log(`Usando decimales por defecto (6) para ${mintPubKey}`);
+                return 6;
+            }
+            await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
+        }
     }
 }
 
@@ -84,7 +90,7 @@ async function getTokenBalance(tokenMint, retries = 5) {
                 console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
                 return 0;
             }
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
         }
     }
 }
@@ -255,23 +261,32 @@ async function buyToken(tokenPubKey, amountPerTrade) {
             signature: txid,
             blockhash: recentBlockhash.blockhash,
             lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
-        }, 'confirmed', { timeout: 60000 });
+        }, 'confirmed', { timeout: 120000 });
         if (!confirmation.value.err) {
             const balance = await getTokenBalance(tokenMint);
-            portfolio[tokenMint] = {
-                buyPrice: buyPrice,
-                amount: balance,
-                lastPrice: buyPrice,
-                decimals,
-                initialSold: false,
-                investedSol: tradeAmount,
-                purchaseTime: Date.now()
-            };
-            tradingCapitalSol -= tradeAmount;
-            console.log(`Compra: ${txid} | ${tokenAmount} ${tokenMint}`);
+            if (balance > DUST_THRESHOLD) {
+                portfolio[tokenMint] = {
+                    buyPrice: buyPrice,
+                    amount: balance,
+                    lastPrice: buyPrice,
+                    decimals,
+                    initialSold: false,
+                    investedSol: tradeAmount,
+                    purchaseTime: Date.now()
+                };
+                tradingCapitalSol -= tradeAmount;
+                console.log(`Compra: ${txid} | ${tokenAmount} ${tokenMint}`);
+            } else {
+                console.log(`Compra fallida: saldo insuficiente (${balance}) para ${tokenMint}`);
+                purchaseHistory[tokenMint]--;
+            }
+        } else {
+            console.log(`Compra fallida: transacción no confirmada para ${tokenMint}`);
+            purchaseHistory[tokenMint]--;
         }
     } catch (error) {
         console.log(`Error compra ${tokenMint}: ${error.message}`);
+        purchaseHistory[tokenMint]--;
     }
 }
 
@@ -311,7 +326,7 @@ async function sellToken(tokenPubKey, portion = 1) {
             signature: txid,
             blockhash: recentBlockhash.blockhash,
             lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
-        }, 'confirmed', { timeout: 60000 });
+        }, 'confirmed', { timeout: 120000 });
         if (!confirmation.value.err) {
             console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
             portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
@@ -410,7 +425,7 @@ async function tradingBot() {
     const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL;
     if (Object.keys(portfolio).length === 0 && availableCapital >= MIN_TRADE_AMOUNT_SOL) {
         const bestToken = await selectBestToken();
-        if (bestToken) {
+        if (bestToken && !portfolio[bestToken.token.toBase58()]) {
             console.log(`Comprando token: ${bestToken.token.toBase58()} con ${availableCapital} SOL`);
             await buyToken(bestToken.token, availableCapital);
         } else {
