@@ -10,25 +10,29 @@ const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const STABLECOINS = [
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  // USDC
+];
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0005; // Reducido
-const FEE_RESERVE_SOL = 0.001; // Reducido
+const MIN_TRADE_AMOUNT_SOL = 0.01;
+const FEE_RESERVE_SOL = 0.001;
 const CRITICAL_THRESHOLD_SOL = 0.00005;
-const CYCLE_INTERVAL = 5000; // 5s
-const UPDATE_INTERVAL = 180000; // 3min
-const MIN_MARKET_CAP = 100000; // $100,000
-const MAX_MARKET_CAP = 2000000; // $2,000,000
-const MIN_VOLUME = 30000; // $30,000 en 24h
-const MIN_LIQUIDITY = 15000; // $15,000
-const MAX_AGE_DAYS = 3; // Reducido a 3 días
-const INITIAL_TAKE_PROFIT = 1.05; // +5%
+const CYCLE_INTERVAL = 5000;
+const UPDATE_INTERVAL = 180000;
+const MIN_MARKET_CAP = 100000;
+const MAX_MARKET_CAP = 2000000;
+const MIN_VOLUME = 30000;
+const MIN_LIQUIDITY = 15000;
+const MAX_AGE_DAYS = 3;
+const INITIAL_TAKE_PROFIT = 1.05;
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
-const STOP_LOSS_THRESHOLD = 0.98; // -2%
-const MAX_HOLD_TIME = 15 * 60 * 1000; // 15 minutos
-const DUST_THRESHOLD = 0.001; // Ignorar saldos menores a esto
+const STOP_LOSS_THRESHOLD = 0.98;
+const MAX_HOLD_TIME = 15 * 60 * 1000;
+const DUST_THRESHOLD = 0.001;
 
 let portfolio = {};
 let volatileTokens = [];
@@ -64,7 +68,7 @@ async function getTokenBalance(tokenMint, retries = 5) {
         try {
             console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
             const account = await getAccount(connection, ata, 'confirmed');
-            const amount = account.amount; // BigInt
+            const amount = account.amount;
             console.log(`Datos de cuenta: amount=${amount.toString()}`);
             const decimals = await getTokenDecimals(tokenMint);
             const balance = Number(amount) / (10 ** decimals);
@@ -80,7 +84,7 @@ async function getTokenBalance(tokenMint, retries = 5) {
                 console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
                 return 0;
             }
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
     }
 }
@@ -98,9 +102,13 @@ async function scanWalletForTokens() {
             const tokenAccountInfo = await connection.getAccountInfo(pubkey, 'confirmed');
             if (!tokenAccountInfo) continue;
             const mint = new PublicKey(tokenAccountInfo.data.slice(0, 32)).toBase58();
+            if (STABLECOINS.includes(mint)) {
+                console.log(`Ignorando stablecoin: ${mint}`);
+                continue;
+            }
             console.log(`Procesando ATA ${ata} para mint ${mint}`);
             const balance = await getTokenBalance(mint);
-            if (balance > DUST_THRESHOLD) { // Ignorar polvo
+            if (balance > DUST_THRESHOLD) {
                 const decimals = await getTokenDecimals(mint);
                 const price = (await getTokenPrice(mint)) || 0.000001;
                 portfolio[mint] = {
@@ -133,7 +141,8 @@ async function updateVolatileTokens() {
                 pair.chainId !== 'solana' || 
                 pair.quoteToken.address !== SOL_MINT || 
                 pair.baseToken.address === SOL_MINT ||
-                pair.dexId !== 'raydium'
+                pair.dexId !== 'raydium' ||
+                STABLECOINS.includes(pair.baseToken.address)
             ) continue;
 
             const fdv = pair.fdv || 0;
@@ -166,8 +175,8 @@ async function updateVolatileTokens() {
             }
         }
         
-        volatilePairs.sort((a, b) => a.ageDays - b.ageDays); // Más nuevos primero
-        volatileTokens = volatilePairs.slice(0, 5).map(t => t.address);
+        volatilePairs.sort((a, b) => a.ageDays - b.ageDays);
+        volatileTokens = volatilePairs.slice(0, 10).map(t => t.address);
         console.log('Lista actualizada (más nuevos):', volatileTokens);
     } catch (error) {
         console.log('Error DexScreener:', error.message);
@@ -185,7 +194,8 @@ async function selectBestToken() {
             tokenMint === SOL_MINT || 
             tokenMint === lastSoldToken || 
             portfolio[tokenMint] || 
-            (purchaseHistory[tokenMint] || 0) >= 2
+            (purchaseHistory[tokenMint] || 0) >= 2 ||
+            STABLECOINS.includes(tokenMint)
         ) continue;
         try {
             const decimals = await getTokenDecimals(tokenMint);
