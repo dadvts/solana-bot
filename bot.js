@@ -19,13 +19,14 @@ let tradingCapitalSol = 0;
 let savedSol = 0;
 const MIN_TRADE_AMOUNT_SOL = 0.005; // Temporal para desbloquear trades
 const FEE_RESERVE_SOL = 0.001;
+const ESTIMATED_FEE_SOL = 0.00005; // Estimación conservadora de fees
 const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 5000;
 const UPDATE_INTERVAL = 180000;
-const MIN_MARKET_CAP = 30000; // Reducido para incluir tokens más pequeños
+const MIN_MARKET_CAP = 30000;
 const MAX_MARKET_CAP = 2000000;
-const MIN_VOLUME = 30000;
-const MIN_LIQUIDITY = 15000;
+const MIN_VOLUME = 10000; // Reducido para más tokens
+const MIN_LIQUIDITY = 5000; // Reducido para más tokens
 const MAX_AGE_DAYS = 3;
 const INITIAL_TAKE_PROFIT = 1.05;
 const SCALE_SELL_PORTION = 0.25;
@@ -33,7 +34,7 @@ const TARGET_INITIAL_SOL = 0.05;
 const STOP_LOSS_THRESHOLD = 0.98;
 const MAX_HOLD_TIME = 15 * 60 * 1000;
 const DUST_THRESHOLD = 0.001;
-const MAX_PURCHASES_PER_TOKEN = 2; // Nuevo límite de compras por token
+const MAX_PURCHASES_PER_TOKEN = 2;
 
 let portfolio = {};
 let volatileTokens = [];
@@ -143,7 +144,7 @@ async function updateVolatileTokens() {
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
         const volatilePairs = [];
-        for (const pair of pairs.slice(0, 200)) {
+        for (const pair of pairs.slice(0, 500)) { // Aumentado a 500
             if (
                 pair.chainId !== 'solana' || 
                 pair.quoteToken.address !== SOL_MINT || 
@@ -194,7 +195,7 @@ async function updateVolatileTokens() {
 async function selectBestToken() {
     let bestToken = null;
     let highestReturn = 0;
-    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL;
+    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL;
 
     for (const tokenMint of volatileTokens) {
         if (
@@ -203,7 +204,10 @@ async function selectBestToken() {
             portfolio[tokenMint] || 
             (purchaseHistory[tokenMint] || 0) >= MAX_PURCHASES_PER_TOKEN ||
             STABLECOINS.includes(tokenMint)
-        ) continue;
+        ) {
+            console.log(`Excluyendo ${tokenMint}: SOL, vendido, en portfolio, límite de compras (${purchaseHistory[tokenMint] || 0}/${MAX_PURCHASES_PER_TOKEN}), o stablecoin`);
+            continue;
+        }
         try {
             const decimals = await getTokenDecimals(tokenMint);
             const quote = await jupiterApi.quoteGet({
@@ -227,15 +231,14 @@ async function selectBestToken() {
 
 async function buyToken(tokenPubKey, amountPerTrade) {
     const tokenMint = tokenPubKey.toBase58();
-    purchaseHistory[tokenMint] = (purchaseHistory[tokenMint] || 0) + 1;
     try {
         const solBalance = await getWalletBalanceSol();
         console.log(`Saldo disponible: ${solBalance} SOL`);
-        const maxTradeAmount = solBalance - FEE_RESERVE_SOL;
+        const maxTradeAmount = solBalance - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL;
         const tradeAmount = Math.min(amountPerTrade, maxTradeAmount, 0.01);
-        console.log(`Monto calculado para trading: ${tradeAmount} SOL (reserva: ${FEE_RESERVE_SOL} SOL)`);
+        console.log(`Monto calculado para trading: ${tradeAmount} SOL (reserva: ${FEE_RESERVE_SOL} SOL, fees estimados: ${ESTIMATED_FEE_SOL} SOL)`);
         if (tradeAmount < MIN_TRADE_AMOUNT_SOL) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
-        if (solBalance < FEE_RESERVE_SOL + MIN_TRADE_AMOUNT_SOL) throw new Error(`Saldo total insuficiente: ${solBalance} SOL`);
+        if (solBalance < tradeAmount + ESTIMATED_FEE_SOL + FEE_RESERVE_SOL) throw new Error(`Saldo total insuficiente: ${solBalance} SOL, se necesitan ${tradeAmount + ESTIMATED_FEE_SOL + FEE_RESERVE_SOL} SOL`);
 
         const decimals = await getTokenDecimals(tokenPubKey);
         const quote = await jupiterApi.quoteGet({
@@ -266,6 +269,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         if (!confirmation.value.err) {
             const balance = await getTokenBalance(tokenMint);
             if (balance > DUST_THRESHOLD) {
+                purchaseHistory[tokenMint] = (purchaseHistory[tokenMint] || 0) + 1; // Incrementar tras confirmación
                 portfolio[tokenMint] = {
                     buyPrice: buyPrice,
                     amount: balance,
@@ -275,19 +279,16 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                     investedSol: tradeAmount,
                     purchaseTime: Date.now()
                 };
-                tradingCapitalSol -= tradeAmount;
-                console.log(`Compra: ${txid} | ${tokenAmount} ${tokenMint}`);
+                tradingCapitalSol -= (tradeAmount + ESTIMATED_FEE_SOL);
+                console.log(`Compra: ${txid} | ${tokenAmount} ${tokenMint} | Compras totales: ${purchaseHistory[tokenMint]}/${MAX_PURCHASES_PER_TOKEN}`);
             } else {
                 console.log(`Compra fallida: saldo insuficiente (${balance}) para ${tokenMint}`);
-                purchaseHistory[tokenMint]--;
             }
         } else {
             console.log(`Compra fallida: transacción no confirmada para ${tokenMint}`);
-            purchaseHistory[tokenMint]--;
         }
     } catch (error) {
         console.log(`Error compra ${tokenMint}: ${error.message}`);
-        purchaseHistory[tokenMint]--;
     }
 }
 
@@ -371,7 +372,7 @@ async function syncPortfolio() {
         if (balance < DUST_THRESHOLD) {
             console.log(`Eliminando ${token} del portfolio: saldo ${balance} menor al umbral de polvo`);
             delete portfolio[token];
-            purchaseHistory[tokenMint] = 0; // Reiniciar tras eliminación automática
+            purchaseHistory[token] = 0; // Reiniciar tras eliminación automática
         } else {
             portfolio[token].amount = balance;
             portfolio[token].lastPrice = (await getTokenPrice(token)) || portfolio[token].lastPrice;
@@ -426,7 +427,7 @@ async function tradingBot() {
         }
     }
 
-    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL;
+    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL;
     if (Object.keys(portfolio).length === 0 && availableCapital >= MIN_TRADE_AMOUNT_SOL) {
         const bestToken = await selectBestToken();
         if (bestToken && !portfolio[bestToken.token.toBase58()]) {
