@@ -4,7 +4,7 @@ const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 
-const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten errores
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
@@ -17,8 +17,8 @@ const STABLECOINS = [
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.015; // Aumentado para trades más grandes
-const FEE_RESERVE_SOL = 0.001;
+const MIN_TRADE_AMOUNT_SOL = 0.015;
+const FEE_RESERVE_SOL = 0.002; // Aumentado para cubrir reintentos
 const ESTIMATED_FEE_SOL = 0.00005;
 const CRITICAL_THRESHOLD_SOL = 0.00005;
 const CYCLE_INTERVAL = 5000;
@@ -36,7 +36,8 @@ const MAX_HOLD_TIME = 15 * 60 * 1000;
 const DUST_THRESHOLD = 0.001;
 const MAX_PURCHASES_PER_TOKEN = 2;
 const MAX_FAILED_ATTEMPTS = 2;
-const MAX_PORTFOLIO_TOKENS = 3; // Permitir hasta 3 tokens activos
+const MAX_PORTFOLIO_TOKENS = 3;
+const MAX_TRANSACTION_RETRIES = 3;
 
 let portfolio = {};
 let volatileTokens = [];
@@ -44,16 +45,24 @@ let lastSoldToken = null;
 let purchaseHistory = {};
 let failedAttempts = {};
 let blockedTokens = [];
+let tokenDecimalsCache = {};
 
 async function getTokenDecimals(mintPubKey, retries = 5) {
+    const mintStr = mintPubKey.toString();
+    if (tokenDecimalsCache[mintStr]) {
+        console.log(`Usando decimales en caché para ${mintStr}: ${tokenDecimalsCache[mintStr]}`);
+        return tokenDecimalsCache[mintStr];
+    }
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const mint = await getMint(connection, new PublicKey(mintPubKey));
+            tokenDecimalsCache[mintStr] = mint.decimals;
             return mint.decimals;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido obteniendo decimales de ${mintPubKey}: ${error.message}`);
+            console.log(`Intento ${attempt} fallido obteniendo decimales de ${mintStr}: ${error.message}`);
             if (attempt === retries) {
-                console.log(`Usando decimales por defecto (6) para ${mintPubKey}`);
+                console.log(`Usando decimales por defecto (6) para ${mintStr}`);
+                tokenDecimalsCache[mintStr] = 6;
                 return 6;
             }
             await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
@@ -130,7 +139,8 @@ async function scanWalletForTokens() {
                     decimals,
                     initialSold: false,
                     investedSol: balance * price,
-                    purchaseTime: Date.now()
+                    purchaseTime: Date.now(),
+                    sellAttempts: 0
                 };
                 console.log(`Token detectado: ${mint} | Cantidad: ${balance} | Precio: ${price} | Valor estimado: ${(balance * price * 170).toFixed(2)} USD`);
             } else {
@@ -244,79 +254,77 @@ async function selectBestToken() {
 
 async function buyToken(tokenPubKey, amountPerTrade) {
     const tokenMint = tokenPubKey.toBase58();
-    try {
-        const solBalance = await getWalletBalanceSol();
-        console.log(`Saldo disponible: ${solBalance} SOL`);
-        const maxTradeAmount = (solBalance - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL) * 0.3; // 30% del capital disponible
-        const tradeAmount = Math.min(amountPerTrade, maxTradeAmount, MIN_TRADE_AMOUNT_SOL);
-        console.log(`Monto calculado para trading: ${tradeAmount} SOL (reserva: ${FEE_RESERVE_SOL} SOL, fees estimados: ${ESTIMATED_FEE_SOL} SOL)`);
-        if (tradeAmount < MIN_TRADE_AMOUNT_SOL) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
-        if (solBalance < tradeAmount + ESTIMATED_FEE_SOL + FEE_RESERVE_SOL) throw new Error(`Saldo total insuficiente: ${solBalance} SOL, se necesitan ${tradeAmount + ESTIMATED_FEE_SOL + FEE_RESERVE_SOL} SOL`);
+    for (let attempt = 1; attempt <= MAX_TRANSACTION_RETRIES; attempt++) {
+        try {
+            const solBalance = await getWalletBalanceSol();
+            console.log(`Saldo disponible: ${solBalance} SOL`);
+            const maxTradeAmount = (solBalance - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL) * 0.3;
+            const tradeAmount = Math.min(amountPerTrade, maxTradeAmount, MIN_TRADE_AMOUNT_SOL);
+            console.log(`Intento ${attempt}: Monto calculado para trading: ${tradeAmount} SOL (reserva: ${FEE_RESERVE_SOL} SOL, fees estimados: ${ESTIMATED_FEE_SOL} SOL)`);
+            if (tradeAmount < MIN_TRADE_AMOUNT_SOL) throw new Error(`Monto insuficiente: ${tradeAmount} SOL`);
+            if (solBalance < tradeAmount + ESTIMATED_FEE_SOL + FEE_RESERVE_SOL) throw new Error(`Saldo total insuficiente: ${solBalance} SOL, se necesitan ${tradeAmount + ESTIMATED_FEE_SOL + FEE_RESERVE_SOL} SOL`);
 
-        const decimals = await getTokenDecimals(tokenPubKey);
-        const quote = await jupiterApi.quoteGet({
-            inputMint: SOL_MINT,
-            outputMint: tokenMint,
-            amount: Math.floor(tradeAmount * LAMPORTS_PER_SOL),
-            slippageBps: 2000
-        });
-        const tokenAmount = quote.outAmount / (10 ** decimals);
-        const buyPrice = tradeAmount / tokenAmount;
+            const decimals = await getTokenDecimals(tokenPubKey);
+            const quote = await jupiterApi.quoteGet({
+                inputMint: SOL_MINT,
+                outputMint: tokenMint,
+                amount: Math.floor(tradeAmount * LAMPORTS_PER_SOL),
+                slippageBps: 2000
+            });
+            const tokenAmount = quote.outAmount / (10 ** decimals);
+            const buyPrice = tradeAmount / tokenAmount;
 
-        const recentBlockhash = await connection.getLatestBlockhash('confirmed');
-        const swapRequest = {
-            quoteResponse: quote,
-            userPublicKey: walletPubKey.toBase58(),
-            wrapAndUnwrapSol: true,
-            recentBlockhash: recentBlockhash.blockhash
-        };
-        const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
-        transaction.sign([keypair]);
-        const txid = await connection.sendRawTransaction(transaction.serialize());
-        const confirmation = await connection.confirmTransaction({
-            signature: txid,
-            blockhash: recentBlockhash.blockhash,
-            lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
-        }, 'confirmed', { timeout: 120000 });
-        if (!confirmation.value.err) {
-            const balance = await getTokenBalance(tokenMint);
-            if (balance > DUST_THRESHOLD) {
-                purchaseHistory[tokenMint] = (purchaseHistory[tokenMint] || 0) + 1;
-                portfolio[tokenMint] = {
-                    buyPrice: buyPrice,
-                    amount: balance,
-                    lastPrice: buyPrice,
-                    decimals,
-                    initialSold: false,
-                    investedSol: tradeAmount,
-                    purchaseTime: Date.now()
-                };
-                tradingCapitalSol -= (tradeAmount + ESTIMATED_FEE_SOL);
-                console.log(`Compra: ${txid} | ${tokenAmount} ${tokenMint} | Compras totales: ${purchaseHistory[tokenMint]}/${MAX_PURCHASES_PER_TOKEN}`);
-                failedAttempts[tokenMint] = 0;
+            const recentBlockhash = await connection.getLatestBlockhash('confirmed');
+            const swapRequest = {
+                quoteResponse: quote,
+                userPublicKey: walletPubKey.toBase58(),
+                wrapAndUnwrapSol: true,
+                recentBlockhash: recentBlockhash.blockhash
+            };
+            const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
+            const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
+            transaction.sign([keypair]);
+            const txid = await connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+            const confirmation = await connection.confirmTransaction({
+                signature: txid,
+                blockhash: recentBlockhash.blockhash,
+                lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
+            }, 'confirmed', { timeout: 120000 });
+            if (!confirmation.value.err) {
+                const balance = await getTokenBalance(tokenMint);
+                if (balance > DUST_THRESHOLD) {
+                    purchaseHistory[tokenMint] = (purchaseHistory[tokenMint] || 0) + 1;
+                    portfolio[tokenMint] = {
+                        buyPrice: buyPrice,
+                        amount: balance,
+                        lastPrice: buyPrice,
+                        decimals,
+                        initialSold: false,
+                        investedSol: tradeAmount,
+                        purchaseTime: Date.now(),
+                        sellAttempts: 0
+                    };
+                    tradingCapitalSol -= (tradeAmount + ESTIMATED_FEE_SOL);
+                    console.log(`Compra exitosa: ${txid} | ${tokenAmount} ${tokenMint} | Compras totales: ${purchaseHistory[tokenMint]}/${MAX_PURCHASES_PER_TOKEN}`);
+                    failedAttempts[tokenMint] = 0;
+                    return;
+                } else {
+                    throw new Error(`Compra fallida: saldo insuficiente (${balance}) para ${tokenMint}`);
+                }
             } else {
-                console.log(`Compra fallida: saldo insuficiente (${balance}) para ${tokenMint}`);
+                throw new Error(`Compra fallida: transacción no confirmada para ${tokenMint}`);
+            }
+        } catch (error) {
+            console.log(`Intento ${attempt} fallido compra ${tokenMint}: ${error.message}`);
+            if (attempt === MAX_TRANSACTION_RETRIES) {
+                console.log(`Compra de ${tokenMint} fallida tras ${MAX_TRANSACTION_RETRIES} intentos`);
                 failedAttempts[tokenMint] = (failedAttempts[tokenMint] || 0) + 1;
                 if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
                     console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
                     blockedTokens.push(tokenMint);
                 }
             }
-        } else {
-            console.log(`Compra fallida: transacción no confirmada para ${tokenMint}`);
-            failedAttempts[tokenMint] = (failedAttempts[tokenMint] || 0) + 1;
-            if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
-                console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
-                blockedTokens.push(tokenMint);
-            }
-        }
-    } catch (error) {
-        console.log(`Error compra ${tokenMint}: ${error.message}`);
-        failedAttempts[tokenMint] = (failedAttempts[tokenMint] || 0) + 1;
-        if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
-            console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
-            blockedTokens.push(tokenMint);
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
 }
@@ -328,59 +336,72 @@ async function sellToken(tokenPubKey, portion = 1) {
     const sellAmount = (await getTokenBalance(tokenMint)) * portion;
 
     if (sellAmount < DUST_THRESHOLD) {
-        console.log(`Ignorando venta de ${tokenMint}: cantidad (${sellAmount}) menor al umbral de polvo`);
+        console.log(`Eliminando ${tokenMint} del portfolio: cantidad (${sellAmount}) menor al umbral de polvo`);
         delete portfolio[tokenMint];
         purchaseHistory[tokenMint] = 0;
         blockedTokens = blockedTokens.filter(t => t !== tokenMint);
         return 0;
     }
 
-    try {
-        const quote = await jupiterApi.quoteGet({
-            inputMint: tokenMint,
-            outputMint: SOL_MINT,
-            amount: Math.floor(sellAmount * (10 ** decimals)),
-            slippageBps: 2000
-        });
-        const solReceived = quote.outAmount / LAMPORTS_PER_SOL;
+    for (let attempt = 1; attempt <= MAX_TRANSACTION_RETRIES; attempt++) {
+        try {
+            console.log(`Intento ${attempt}: Vendiendo ${tokenMint} (${portion * 100}%)`);
+            const quote = await jupiterApi.quoteGet({
+                inputMint: tokenMint,
+                outputMint: SOL_MINT,
+                amount: Math.floor(sellAmount * (10 ** decimals)),
+                slippageBps: 2000
+            });
+            const solReceived = quote.outAmount / LAMPORTS_PER_SOL;
 
-        const recentBlockhash = await connection.getLatestBlockhash('confirmed');
-        const swapRequest = {
-            quoteResponse: quote,
-            userPublicKey: walletPubKey.toBase58(),
-            wrapAndUnwrapSol: true,
-            recentBlockhash: recentBlockhash.blockhash
-        };
-        const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
-        const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
-        transaction.sign([keypair]);
-        const txid = await connection.sendRawTransaction(transaction.serialize());
-        const confirmation = await connection.confirmTransaction({
-            signature: txid,
-            blockhash: recentBlockhash.blockhash,
-            lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
-        }, 'confirmed', { timeout: 120000 });
-        if (!confirmation.value.err) {
-            console.log(`Venta (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
-            portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
-            if (portfolio[tokenMint].amount < DUST_THRESHOLD) {
-                lastSoldToken = tokenMint;
+            const recentBlockhash = await connection.getLatestBlockhash('confirmed');
+            const swapRequest = {
+                quoteResponse: quote,
+                userPublicKey: walletPubKey.toBase58(),
+                wrapAndUnwrapSol: true,
+                recentBlockhash: recentBlockhash.blockhash
+            };
+            const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
+            const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
+            transaction.sign([keypair]);
+            const txid = await connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+            const confirmation = await connection.confirmTransaction({
+                signature: txid,
+                blockhash: recentBlockhash.blockhash,
+                lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
+            }, 'confirmed', { timeout: 120000 });
+            if (!confirmation.value.err) {
+                console.log(`Venta exitosa (${portion * 100}%): ${txid} | ${solReceived} SOL de ${tokenMint}`);
+                portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
+                if (portfolio[tokenMint].amount < DUST_THRESHOLD) {
+                    lastSoldToken = tokenMint;
+                    delete portfolio[tokenMint];
+                    purchaseHistory[tokenMint] = 0;
+                    blockedTokens = blockedTokens.filter(t => t !== tokenMint);
+                } else if (portion < 1) {
+                    portfolio[tokenMint].initialSold = true;
+                }
+                tradingCapitalSol += solReceived;
+                portfolio[tokenMint].sellAttempts = 0;
+                return solReceived;
+            }
+        } catch (error) {
+            console.log(`Intento ${attempt} fallido vendiendo ${tokenMint}: ${error.message}`);
+            portfolio[tokenMint].sellAttempts = (portfolio[tokenMint].sellAttempts || 0) + 1;
+            if (attempt === MAX_TRANSACTION_RETRIES || portfolio[tokenMint].sellAttempts >= MAX_FAILED_ATTEMPTS) {
+                console.log(`Eliminando ${tokenMint} del portfolio tras ${portfolio[tokenMint].sellAttempts} intentos fallidos de venta`);
                 delete portfolio[tokenMint];
                 purchaseHistory[tokenMint] = 0;
-                blockedTokens = blockedTokens.filter(t => t !== tokenMint);
-            } else if (portion < 1) {
-                portfolio[tokenMint].initialSold = true;
+                blockedTokens.push(tokenMint);
+                return 0;
             }
-            tradingCapitalSol += solReceived;
-            return solReceived;
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
-    } catch (error) {
-        console.log(`Error vendiendo ${tokenMint}: ${error.message}`);
-        return 0;
     }
+    return 0;
 }
 
-async function getTokenPrice(tokenMint, retries = 5) {
+async function getTokenPrice(tokenMint, retries = 7) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const decimals = await getTokenDecimals(tokenMint);
@@ -395,6 +416,11 @@ async function getTokenPrice(tokenMint, retries = 5) {
             console.log(`Intento ${attempt} fallido obteniendo precio de ${tokenMint}: ${error.message}`);
             if (attempt === retries) {
                 console.log(`No se pudo obtener precio de ${tokenMint} tras ${retries} intentos, asumiendo precio 0`);
+                failedAttempts[tokenMint] = (failedAttempts[tokenMint] || 0) + 1;
+                if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
+                    console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
+                    blockedTokens.push(tokenMint);
+                }
                 return 0;
             }
             await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
@@ -413,8 +439,16 @@ async function syncPortfolio() {
             blockedTokens = blockedTokens.filter(t => t !== token);
         } else {
             portfolio[token].amount = balance;
-            portfolio[token].lastPrice = (await getTokenPrice(token)) || portfolio[token].lastPrice;
-            console.log(`Portfolio actualizado: ${token} con ${balance} tokens`);
+            const price = await getTokenPrice(token);
+            portfolio[token].lastPrice = price || portfolio[token].lastPrice;
+            if (price === 0 && portfolio[token].sellAttempts >= MAX_FAILED_ATTEMPTS) {
+                console.log(`Eliminando ${token} del portfolio: precio no disponible tras ${portfolio[token].sellAttempts} intentos`);
+                delete portfolio[token];
+                purchaseHistory[token] = 0;
+                blockedTokens.push(token);
+            } else {
+                console.log(`Portfolio actualizado: ${token} con ${balance} tokens | Precio: ${portfolio[token].lastPrice}`);
+            }
         }
     }
 }
@@ -435,10 +469,10 @@ async function tradingBot() {
 
     for (const token in portfolio) {
         const currentPrice = await getTokenPrice(token);
-        const { buyPrice, lastPrice, initialSold, investedSol, purchaseTime } = portfolio[token];
+        const { buyPrice, lastPrice, initialSold, investedSol, purchaseTime, sellAttempts } = portfolio[token];
         const timeHeld = Date.now() - purchaseTime;
 
-        console.log(`${token}: Precio: ${currentPrice} | Tiempo: ${timeHeld / 1000}s`);
+        console.log(`${token}: Precio: ${currentPrice} | Tiempo: ${timeHeld / 1000}s | Intentos de venta: ${sellAttempts}`);
 
         if (timeHeld > MAX_HOLD_TIME || currentPrice === 0) {
             console.log(`Vendiendo ${token}: tiempo máximo alcanzado o precio no disponible`);
