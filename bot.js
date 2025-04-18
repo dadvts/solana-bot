@@ -17,16 +17,16 @@ const STABLECOINS = [
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.005; // Reducido para permitir trades con bajo capital
-const FEE_RESERVE_SOL = 0.0015; // Reducido para liberar capital
-const ESTIMATED_FEE_SOL = 0.0001; // Aumentado para reflejar fees reales
-const CRITICAL_THRESHOLD_SOL = 0.0001; // Aumentado para proteger capital
+const MIN_TRADE_AMOUNT_SOL = 0.001; // Reducido para bajo capital
+const FEE_RESERVE_SOL = 0.0015;
+const ESTIMATED_FEE_SOL = 0.0001;
+const CRITICAL_THRESHOLD_SOL = 0.0005;
 const CYCLE_INTERVAL = 5000;
 const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 30000;
 const MAX_MARKET_CAP = 2000000;
 const MIN_VOLUME = 30000;
-const MIN_LIQUIDITY = 15000;
+const MIN_LIQUIDITY = 5000; // Reducido temporalmente
 const MAX_AGE_DAYS = 3;
 const INITIAL_TAKE_PROFIT = 1.05;
 const SCALE_SELL_PORTION = 0.25;
@@ -38,7 +38,7 @@ const MAX_PURCHASES_PER_TOKEN = 2;
 const MAX_FAILED_ATTEMPTS = 2;
 const MAX_PORTFOLIO_TOKENS = 3;
 const MAX_TRANSACTION_RETRIES = 3;
-const BLOCKED_TOKEN_TIMEOUT = 24 * 60 * 60 * 1000; // 24 horas
+const BLOCKED_TOKEN_TIMEOUT = 24 * 60 * 60 * 1000;
 
 let portfolio = {};
 let volatileTokens = [];
@@ -67,7 +67,7 @@ async function getTokenDecimals(mintPubKey, retries = 5) {
                 tokenDecimalsCache[mintStr] = 6;
                 return 6;
             }
-            await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 1000)); // Aumentado a 1000ms
+            await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 1000));
         }
     }
 }
@@ -140,7 +140,7 @@ async function scanWalletForTokens() {
                     lastPrice: price,
                     decimals,
                     initialSold: false,
-                    investedSol: balance * price,
+                    investedSol: balance * price, // Corregir si investedSol es 0
                     purchaseTime: Date.now(),
                     sellAttempts: 0
                 };
@@ -162,7 +162,7 @@ async function updateVolatileTokens() {
         console.log(`Total de pares obtenidos: ${pairs.length}`);
         
         const volatilePairs = [];
-        for (const pair of pairs.slice(0, 500)) { // Aumentado a 500
+        for (const pair of pairs.slice(0, 500)) {
             if (
                 pair.chainId !== 'solana' || 
                 pair.quoteToken.address !== SOL_MINT || 
@@ -234,9 +234,10 @@ async function selectBestToken() {
             portfolio[tokenMint] || 
             (purchaseHistory[tokenMint] || 0) >= MAX_PURCHASES_PER_TOKEN ||
             blockedTokens.includes(tokenMint) ||
-            STABLECOINS.includes(tokenMint)
+            STABLECOINS.includes(tokenMint) ||
+            (await getTokenBalance(tokenMint) > DUST_THRESHOLD) // Excluir si ya tenemos saldo
         ) {
-            console.log(`Excluyendo ${tokenMint}: SOL, vendido, en portfolio, límite de compras (${purchaseHistory[tokenMint] || 0}/${MAX_PURCHASES_PER_TOKEN}), bloqueado, o stablecoin`);
+            console.log(`Excluyendo ${tokenMint}: SOL, vendido, en portfolio, límite de compras (${purchaseHistory[tokenMint] || 0}/${MAX_PURCHASES_PER_TOKEN}), bloqueado, stablecoin, o saldo existente`);
             continue;
         }
         try {
@@ -313,7 +314,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                         lastPrice: buyPrice,
                         decimals,
                         initialSold: false,
-                        investedSol: tradeAmount,
+                        investedSol: tradeAmount, // Registrar correctamente
                         purchaseTime: Date.now(),
                         sellAttempts: 0
                     };
@@ -345,8 +346,11 @@ async function buyToken(tokenPubKey, amountPerTrade) {
 
 async function sellToken(tokenPubKey, portion = 1) {
     const tokenMint = tokenPubKey.toBase58();
-    if (!portfolio[tokenMint]) return 0;
-    const { buyPrice, amount, decimals } = portfolio[tokenMint];
+    if (!portfolio[tokenMint]) {
+        console.log(`No se puede vender ${tokenMint}: no está en el portfolio`);
+        return 0;
+    }
+    const { buyPrice, amount, decimals, investedSol } = portfolio[tokenMint];
     const sellAmount = (await getTokenBalance(tokenMint)) * portion;
 
     if (sellAmount < DUST_THRESHOLD) {
@@ -355,6 +359,12 @@ async function sellToken(tokenPubKey, portion = 1) {
         purchaseHistory[tokenMint] = 0;
         blockedTokens = blockedTokens.filter(t => t !== tokenMint);
         delete blockedTokenTimestamps[tokenMint];
+        return 0;
+    }
+
+    const solBalance = await getWalletBalanceSol();
+    if (solBalance < ESTIMATED_FEE_SOL) {
+        console.log(`No se puede vender ${tokenMint}: saldo SOL insuficiente (${solBalance} < ${ESTIMATED_FEE_SOL})`);
         return 0;
     }
 
@@ -418,7 +428,7 @@ async function sellToken(tokenPubKey, portion = 1) {
     return 0;
 }
 
-async function getTokenPrice(tokenMint, retries = 7) {
+async function getTokenPrice(tokenMint, retries = 3) {
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             const decimals = await getTokenDecimals(tokenMint);
@@ -481,10 +491,20 @@ async function tradingBot() {
 
     await syncPortfolio();
 
-    if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
-        console.log('Umbral crítico SOL: vendiendo todo...');
+    // Forzar venta si el capital es crítico
+    if (realBalanceSol < MIN_TRADE_AMOUNT_SOL && Object.keys(portfolio).length > 0) {
+        console.log('Capital crítico: vendiendo todo...');
         for (const token in portfolio) await sellToken(new PublicKey(token));
         return;
+    }
+
+    // Intentar vender tokens ilíquidos
+    for (const token in portfolio) {
+        const price = await getTokenPrice(token);
+        if (price === 0) {
+            console.log(`Vendiendo ${token}: precio no disponible`);
+            await sellToken(new PublicKey(token));
+        }
     }
 
     for (const token in portfolio) {
@@ -508,7 +528,7 @@ async function tradingBot() {
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
                 console.log(`Take-profit inicial para ${token}`);
-                const portionToRecover = Math.min(1, investedSol / (currentPrice * portfolio[token].amount));
+                const portionToRecover = investedSol > 0 ? Math.min(1, investedSol / (currentPrice * portfolio[token].amount)) : 0.25; // Valor por defecto
                 await sellToken(new PublicKey(token), portionToRecover);
             } else if (initialSold && growth >= 1.3 && growthVsLast > 0) {
                 console.log(`Escalando ganancias para ${token}`);
@@ -523,7 +543,11 @@ async function tradingBot() {
     }
 
     const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL;
-    if (Object.keys(portfolio).length < MAX_PORTFOLIO_TOKENS && availableCapital >= MIN_TRADE_AMOUNT_SOL) {
+    if (Object.keys(portfolio).length >= MAX_PORTFOLIO_TOKENS) {
+        console.log(`No se puede comprar: Portfolio lleno (${Object.keys(portfolio).length}/${MAX_PORTFOLIO_TOKENS})`);
+    } else if (availableCapital < MIN_TRADE_AMOUNT_SOL) {
+        console.log(`No se puede comprar: Capital insuficiente (${availableCapital} SOL < ${MIN_TRADE_AMOUNT_SOL} SOL)`);
+    } else {
         const bestToken = await selectBestToken();
         if (bestToken && !portfolio[bestToken.token.toBase58()]) {
             console.log(`Comprando token: ${bestToken.token.toBase58()} con ${availableCapital} SOL`);
@@ -531,23 +555,32 @@ async function tradingBot() {
         } else {
             console.log('No se encontraron tokens viables para comprar');
         }
-    } else {
-        console.log(`No se puede comprar: Portfolio lleno (${Object.keys(portfolio).length}/${MAX_PORTFOLIO_TOKENS}) o capital insuficiente (${availableCapital} SOL)`);
     }
     console.log('Ciclo completado.');
 }
 
 async function startBot() {
-    const solBalance = await getWalletBalanceSol();
-    tradingCapitalSol = solBalance;
-    console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
-    console.log('Dirección de la wallet:', walletPubKey.toBase58());
+    try {
+        const solBalance = await getWalletBalanceSol();
+        tradingCapitalSol = solBalance;
+        console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
+        console.log('Dirección de la wallet:', walletPubKey.toBase58());
 
-    await updateVolatileTokens();
-    await scanWalletForTokens();
-    await tradingBot();
-    setInterval(tradingBot, CYCLE_INTERVAL);
-    setInterval(updateVolatileTokens, UPDATE_INTERVAL);
+        // Forzar limpieza de blockedTokens y purchaseHistory al inicio
+        blockedTokens = [];
+        blockedTokenTimestamps = {};
+        purchaseHistory = {};
+        console.log('Blocked tokens y purchase history limpiados al inicio');
+
+        await updateVolatileTokens();
+        await scanWalletForTokens();
+        await tradingBot();
+        setInterval(tradingBot, CYCLE_INTERVAL);
+        setInterval(updateVolatileTokens, UPDATE_INTERVAL);
+    } catch (error) {
+        console.log(`Error iniciando bot: ${error.message}`);
+        setTimeout(startBot, 30000); // Reintentar tras 30s
+    }
 }
 
 startBot();
