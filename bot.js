@@ -1,10 +1,16 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL, ComputeBudgetProgram } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, createCloseAccountInstruction } = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddressSync, getAccount, TOKEN_PROGRAM_ID, createCloseAccountInstruction } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 const fs = require('fs').promises;
 const Bottleneck = require('bottleneck');
+
+// Validar dependencias
+if (!getAssociatedTokenAddressSync) {
+    console.error('Error: getAssociatedTokenAddressSync no está disponible en @solana/spl-token');
+    process.exit(1);
+}
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten 429: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY'
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -28,10 +34,10 @@ const limitedAxiosGet = limiter.wrap(axios.get.bind(axios));
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0005;
-const FEE_RESERVE_SOL = 0.0005;
+const MIN_TRADE_AMOUNT_SOL = 0.0003; // Reducido para bajo saldo
+const FEE_RESERVE_SOL = 0.0003; // Reducido para bajo saldo
 const ESTIMATED_FEE_SOL = 0.0001;
-const CRITICAL_THRESHOLD_SOL = 0.0003;
+const CRITICAL_THRESHOLD_SOL = 0.0002; // Reducido para bajo saldo
 const CYCLE_INTERVAL = 3000;
 const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 20000;
@@ -100,7 +106,7 @@ async function getTokenDecimals(mintPubKey, retries = 5) {
     }
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-            const mint = await getMint(connection, new PublicKey(mintPubKey));
+            const mint = await getMint(connection, new PublicKey(mintStr));
             tokenDecimalsCache[mintStr] = mint.decimals;
             await savePersistentData();
             return mint.decimals;
@@ -128,44 +134,50 @@ async function getWalletBalanceSol() {
 }
 
 async function getTokenBalance(tokenMint, retries = 8) {
-    const mintPubKey = new PublicKey(tokenMint);
-    const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
-    console.log(`Calculada ATA: ${ata.toBase58()} para ${tokenMint}`);
+    try {
+        const mintPubKey = new PublicKey(tokenMint);
+        console.log(`Calculando ATA para ${tokenMint}`);
+        const ata = getAssociatedTokenAddressSync(mintPubKey, walletPubKey);
+        console.log(`ATA calculada: ${ata.toBase58()} para ${tokenMint}`);
 
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
-            const account = await getAccount(connection, ata, 'confirmed');
-            const amount = BigInt(account.amount);
-            console.log(`Datos de cuenta: amount=${amount.toString()}`);
-            const decimals = await getTokenDecimals(tokenMint);
-            const balance = Number(amount) / (10 ** decimals);
-            console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
-            return balance;
-        } catch (error) {
-            console.log(`Intento ${attempt} fallido: ${error.name} | ${error.message}`);
-            if (error.message.includes('TokenAccountNotFoundError') || error.message.includes('Account not found')) {
-                console.log(`ATA ${ata.toBase58()} no existe o está vacía`);
-                return 0;
-            }
-            if (attempt === retries) {
-                console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
-                return 0;
-            }
-            if (error.message.includes('429 Too Many Requests')) {
-                console.log(`Error 429, reintentando tras ${2 ** attempt * 500}ms`);
-                await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
-            } else {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+        for (let attempt = 1; attempt <= retries; attempt++) {
+            try {
+                console.log(`Intento ${attempt}: Consultando ATA ${ata.toBase58()}`);
+                const account = await getAccount(connection, ata, 'confirmed');
+                const amount = BigInt(account.amount);
+                console.log(`Datos de cuenta: amount=${amount.toString()}`);
+                const decimals = await getTokenDecimals(tokenMint);
+                const balance = Number(amount) / (10 ** decimals);
+                console.log(`Saldo encontrado: ${balance} para ${tokenMint}`);
+                return balance;
+            } catch (error) {
+                console.log(`Intento ${attempt} fallido: ${error.name} | ${error.message}`);
+                if (error.message.includes('TokenAccountNotFoundError') || error.message.includes('Account not found')) {
+                    console.log(`ATA ${ata.toBase58()} no existe o está vacía`);
+                    return 0;
+                }
+                if (attempt === retries) {
+                    console.log(`No se pudo obtener saldo de ${tokenMint} tras ${retries} intentos`);
+                    return 0;
+                }
+                if (error.message.includes('429 Too Many Requests')) {
+                    console.log(`Error 429, reintentando tras ${2 ** attempt * 500}ms`);
+                    await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
             }
         }
+    } catch (error) {
+        console.log(`Error crítico en getTokenBalance para ${tokenMint}: ${error.message}`);
+        return 0;
     }
 }
 
 async function closeEmptyATA(tokenMint) {
     try {
         const mintPubKey = new PublicKey(tokenMint);
-        const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+        const ata = getAssociatedTokenAddressSync(mintPubKey, walletPubKey);
         const balance = await getTokenBalance(tokenMint);
         if (balance === 0) {
             console.log(`Cerrando ATA vacía para ${tokenMint}: ${ata.toBase58()}`);
@@ -206,33 +218,40 @@ async function scanWalletForTokens(force = false) {
         
         portfolio = {};
         for (const { pubkey } of accounts) {
-            const ata = pubkey.toBase58();
-            const tokenAccountInfo = await connection.getAccountInfo(pubkey, 'confirmed');
-            if (!tokenAccountInfo) continue;
-            const mint = new PublicKey(tokenAccountInfo.data.slice(0, 32)).toBase58();
-            if (STABLECOINS.includes(mint)) {
-                console.log(`Ignorando stablecoin: ${mint}`);
-                continue;
-            }
-            console.log(`Procesando ATA ${ata} para mint ${mint}`);
-            const balance = await getTokenBalance(mint);
-            if (balance > DUST_THRESHOLD) {
-                const decimals = await getTokenDecimals(mint);
-                const price = (await getTokenPrice(mint)) || 0.000001;
-                portfolio[mint] = {
-                    buyPrice: price,
-                    amount: balance,
-                    lastPrice: price,
-                    decimals,
-                    initialSold: false,
-                    investedSol: balance * price,
-                    purchaseTime: Date.now(),
-                    sellAttempts: 0
-                };
-                console.log(`Token detectado: ${mint} | Cantidad: ${balance} | Precio: ${price} | Valor estimado: ${(balance * price * 170).toFixed(2)} USD`);
-            } else {
-                console.log(`Ignorando ${mint}: saldo ${balance} menor al umbral de polvo`);
-                await closeEmptyATA(mint);
+            try {
+                const ata = pubkey.toBase58();
+                const tokenAccountInfo = await connection.getAccountInfo(pubkey, 'confirmed');
+                if (!tokenAccountInfo) {
+                    console.log(`Ignorando ATA ${ata}: sin información de cuenta`);
+                    continue;
+                }
+                const mint = new PublicKey(tokenAccountInfo.data.slice(0, 32)).toBase58();
+                if (STABLECOINS.includes(mint)) {
+                    console.log(`Ignorando stablecoin: ${mint}`);
+                    continue;
+                }
+                console.log(`Procesando ATA ${ata} para mint ${mint}`);
+                const balance = await getTokenBalance(mint);
+                if (balance > DUST_THRESHOLD) {
+                    const decimals = await getTokenDecimals(mint);
+                    const price = (await getTokenPrice(mint)) || 0.000001;
+                    portfolio[mint] = {
+                        buyPrice: price,
+                        amount: balance,
+                        lastPrice: price,
+                        decimals,
+                        initialSold: false,
+                        investedSol: balance * price,
+                        purchaseTime: Date.now(),
+                        sellAttempts: 0
+                    };
+                    console.log(`Token detectado: ${mint} | Cantidad: ${balance} | Precio: ${price} | Valor estimado: ${(balance * price * 170).toFixed(2)} USD`);
+                } else {
+                    console.log(`Ignorando ${mint}: saldo ${balance} menor al umbral de polvo`);
+                    await closeEmptyATA(mint);
+                }
+            } catch (error) {
+                console.log(`Error procesando cuenta para ATA ${pubkey.toBase58()}: ${error.message}`);
             }
         }
     } catch (error) {
@@ -295,7 +314,7 @@ async function updateVolatileTokens() {
                     const quote = await limitedQuoteGet({
                         inputMint: SOL_MINT,
                         outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.0005 * LAMPORTS_PER_SOL),
+                        amount: Math.floor(0.0003 * LAMPORTS_PER_SOL),
                         slippageBps: 5000
                     });
                     volatilePairs.push({
