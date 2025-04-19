@@ -7,9 +7,9 @@
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.40",
-    "@solana/spl-token": "^0.4.13",
-    "@solana/web3.js": "^1.98.0",
-    "axios": "^1.8.4",
+    "@solana/spl-token": "^0.1.8",
+    "@solana/web3.js": "^1.43.0",
+    "axios": "^1.7.2",
     "bs58": "^5.0.0",
     "node-fetch": "^2.7.0"
   },
