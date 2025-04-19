@@ -237,7 +237,7 @@ async function scanWalletForTokens(force = false) {
 }
 
 async function updateVolatileTokens() {
-    console.log('Actualizando tokens volátiles...');
+    console.log('Actualizando tokens volátiles desde DexScreener...');
     try {
         let pairs = [];
         try {
@@ -245,28 +245,14 @@ async function updateVolatileTokens() {
             pairs = response.data.pairs || [];
             console.log(`Total de pares obtenidos de DexScreener: ${pairs.length}`);
         } catch (error) {
-            console.log('Error DexScreener:', error.message);
+            console.log(`Error DexScreener: ${error.message}`);
+            return;
         }
 
-        if (pairs.length < 50) {
-            try {
-                const response = await limitedAxiosGet('https://public-api.birdeye.so/public/tokenlist?sort_by=mc&sort_type=desc&offset=0&limit=500', {
-                    headers: { 'X-API-KEY': 'YOUR_BIRDEYE_API_KEY' }
-                });
-                pairs = response.data.data.tokens.map(token => ({
-                    chainId: 'solana',
-                    baseToken: { address: token.address },
-                    quoteToken: { address: SOL_MINT },
-                    dexId: 'raydium',
-                    fdv: token.mc,
-                    volume: { h24: token.v24h_usd },
-                    liquidity: { usd: token.liquidity },
-                    pairCreatedAt: token.created_at ? new Date(token.created_at).getTime() : Date.now()
-                }));
-                console.log(`Total de pares obtenidos de Birdeye: ${pairs.length}`);
-            } catch (error) {
-                console.log('Error Birdeye:', error.message);
-            }
+        if (pairs.length < 10) {
+            console.log('Advertencia: pocos pares obtenidos, relajando filtros...');
+            MIN_LIQUIDITY = 1000;
+            MAX_AGE_DAYS = 2;
         }
 
         pairsCache = pairs;
@@ -328,7 +314,8 @@ async function updateVolatileTokens() {
 }
 
 async function isLiquidityLocked(tokenMint) {
-    // TODO: Implementar chequeo de liquidez bloqueada usando @raydium-io/raydium-sdk o Birdeye API
+    // TODO: Implementar chequeo de liquidez bloqueada usando @raydium-io/raydium-sdk
+    // Ejemplo: npm install @raydium-io/raydium-sdk
     console.log(`Placeholder: Verificando liquidez bloqueada para ${tokenMint}`);
     return true; // Asumir que está bloqueada por ahora
 }
@@ -483,7 +470,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                         sellAttempts: 0
                     };
                     tradingCapitalSol -= (tradeAmount + ESTIMATED_FEE_SOL);
-                    console.log(`Compra exitosa: ${txid} | ${tokenAmount} ${tokenMint} | Compras totales: ${purchaseHistory[tokenMint].count}/${MAX_PURCHASES_PER_TOKEN}`);
+                    console.log(`Compra exitosa: ${txid} | ${tokenAmount} ${tokenMint} | Usando pool de ${quote.routePlan[0]?.swapInfo?.ammLabel || 'desconocido'} | Compras totales: ${purchaseHistory[tokenMint].count}/${MAX_PURCHASES_PER_TOKEN}`);
                     failedAttempts[tokenMint] = 0;
                     if (purchaseHistory[tokenMint].count >= MAX_PURCHASES_PER_TOKEN) {
                         console.log(`Bloqueando ${tokenMint}: máximo de compras alcanzado`);
@@ -574,7 +561,7 @@ async function sellToken(tokenPubKey, portion = 1) {
                 wrapAndUnwrapSol: true,
                 recentBlockhash: recentBlockhash.blockhash
             };
-            const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
+            const response = await axios.post('https://://quote-api.jup.ag/v6/swap', swapRequest);
             const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
             transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: await getPriorityFee() }));
             transaction.sign([keypair]);
@@ -585,7 +572,7 @@ async function sellToken(tokenPubKey, portion = 1) {
                 lastValidBlockHeight: recentBlockhash.lastValidBlockHeight
             }, 'confirmed', { timeout: 180000 });
             if (!confirmation.value.err) {
-                console.log(`Venta exitosa: ${txid} | ${solReceived} SOL de ${tokenMint}`);
+                console.log(`Venta exitosa: ${txid} | ${solReceived} SOL de ${tokenMint} | Usando pool de ${quote.routePlan[0]?.swapInfo?.ammLabel || 'desconocido'}`);
                 portfolio[tokenMint].amount = await getTokenBalance(tokenMint);
                 if (portfolio[tokenMint].amount < DUST_THRESHOLD) {
                     lastSoldToken = tokenMint;
@@ -690,7 +677,7 @@ async function syncPortfolio() {
                 await savePersistentData();
                 await closeEmptyATA(token);
             } else {
-                console.log(`Portfolio actualizado: ${token} con ${balance} tokens | Precio: ${portfolio[token].last1stPrice: ${portfolio[token].lastPrice}`);
+                console.log(`Portfolio actualizado: ${token} con ${balance} tokens | Precio: ${portfolio[token].lastPrice}`);
             }
         }
     }
@@ -784,7 +771,7 @@ async function startBot() {
         console.log('Blocked tokens limpiados al inicio');
 
         await updateVolatileTokens();
-        await scanWalletForTokens(true);
+        await scanSDA scanWalletForTokens(true);
         await tradingBot();
         setInterval(tradingBot, CYCLE_INTERVAL);
         setInterval(updateVolatileTokens, UPDATE_INTERVAL);
