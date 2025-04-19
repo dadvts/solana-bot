@@ -8,6 +8,10 @@ const Bottleneck = require('bottleneck');
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten 429: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY'
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
+if (!PRIVATE_KEY) {
+    console.error('Error: PRIVATE_KEY no está configurada en las variables de entorno');
+    process.exit(1);
+}
 const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 const walletPubKey = keypair.publicKey;
 const jupiterApi = createJupiterApiClient({ basePath: 'https://quote-api.jup.ag' });
@@ -33,8 +37,8 @@ const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 20000;
 const MAX_MARKET_CAP = 2000000;
 const MIN_VOLUME = 20000;
-const MIN_LIQUIDITY = 2000;
-const MAX_AGE_DAYS = 1;
+let MIN_LIQUIDITY = 2000;
+let MAX_AGE_DAYS = 1;
 const INITIAL_TAKE_PROFIT = 1.3;
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
@@ -253,6 +257,9 @@ async function updateVolatileTokens() {
             console.log('Advertencia: pocos pares obtenidos, relajando filtros...');
             MIN_LIQUIDITY = 1000;
             MAX_AGE_DAYS = 2;
+        } else {
+            MIN_LIQUIDITY = 2000;
+            MAX_AGE_DAYS = 1;
         }
 
         pairsCache = pairs;
@@ -561,7 +568,7 @@ async function sellToken(tokenPubKey, portion = 1) {
                 wrapAndUnwrapSol: true,
                 recentBlockhash: recentBlockhash.blockhash
             };
-            const response = await axios.post('https://://quote-api.jup.ag/v6/swap', swapRequest);
+            const response = await axios.post('https://quote-api.jup.ag/v6/swap', swapRequest);
             const transaction = VersionedTransaction.deserialize(Buffer.from(response.data.swapTransaction, 'base64'));
             transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: await getPriorityFee() }));
             transaction.sign([keypair]);
@@ -759,6 +766,7 @@ async function tradingBot() {
 }
 
 async function startBot() {
+    console.log(`Iniciando bot | Versión de Node.js: ${process.version}`);
     try {
         await loadPersistentData();
         const solBalance = await getWalletBalanceSol();
@@ -771,12 +779,13 @@ async function startBot() {
         console.log('Blocked tokens limpiados al inicio');
 
         await updateVolatileTokens();
-        await scanSDA scanWalletForTokens(true);
+        await scanWalletForTokens(true);
         await tradingBot();
         setInterval(tradingBot, CYCLE_INTERVAL);
         setInterval(updateVolatileTokens, UPDATE_INTERVAL);
     } catch (error) {
-        console.log(`Error iniciando bot: ${error.message}`);
+        console.error(`Error crítico iniciando bot: ${error.message}`);
+        console.error(error.stack);
         setTimeout(startBot, 30000);
     }
 }
