@@ -10,7 +10,7 @@ const Bottleneck = require('bottleneck');
 // Log para verificar la versión de @solana/spl-token
 console.log('Versión de @solana/spl-token:', require('@solana/spl-token/package.json').version);
 
-const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten 429: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY'
+const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten 429
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) {
     console.error('Error: PRIVATE_KEY no está configurada en las variables de entorno');
@@ -25,17 +25,33 @@ const STABLECOINS = [
     'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  // USDC
 ];
 
+// Configuración de axios con timeout aumentado y reintentos
+const axiosInstance = axios.create({
+    timeout: 15000, // 15 segundos
+    headers: { 'User-Agent': 'solana-bot/1.0' }
+});
+
 // Rate limiting para APIs
 const limiter = new Bottleneck({ minTime: 200 }); // 5 solicitudes por segundo
 const limitedQuoteGet = limiter.wrap(jupiterApi.quoteGet.bind(jupiterApi));
-const limitedAxiosGet = limiter.wrap(axios.get.bind(axios));
+const limitedAxiosGet = limiter.wrap(async (url) => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            return await axiosInstance.get(url);
+        } catch (error) {
+            console.log(`Intento ${attempt} fallido en Axios: ${error.message}`);
+            if (attempt === 3) throw error;
+            await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 1000));
+        }
+    }
+});
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0003; // Mantenido para bajo saldo
-const FEE_RESERVE_SOL = 0.0003; // Mantenido para bajo saldo
+const MIN_TRADE_AMOUNT_SOL = 0.0003;
+const FEE_RESERVE_SOL = 0.0003;
 const ESTIMATED_FEE_SOL = 0.0001;
-const CRITICAL_THRESHOLD_SOL = 0.0002; // Mantenido para bajo saldo
+const CRITICAL_THRESHOLD_SOL = 0.0002;
 const CYCLE_INTERVAL = 3000;
 const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 20000; // Sin cambios
@@ -278,16 +294,24 @@ async function updateVolatileTokens() {
             pairs = response.data.pairs || [];
             console.log(`Total de pares obtenidos de DexScreener: ${pairs.length}`);
         } catch (error) {
-            console.log(`Error DexScreener: ${error.message}`);
+            console.log(`Error DexScreener: ${error.message} | Detalles: ${error.response?.data || 'Sin detalles'}`);
             return;
         }
 
+        if (pairs.length === 0) {
+            console.log('Error: No se obtuvieron pares de DexScreener');
+            return;
+        }
         if (pairs.length < 10) {
             console.log('Advertencia: pocos pares obtenidos, pero manteniendo filtros originales...');
         }
 
         pairsCache = pairs;
+        let initialFiltered = 0;
+        let paramFiltered = 0;
+        let jupiterFiltered = 0;
         const volatilePairs = [];
+
         for (const pair of pairs.slice(0, 500)) {
             const tokenMint = pair.baseToken.address;
             if (
@@ -299,6 +323,7 @@ async function updateVolatileTokens() {
                 blockedTokens.includes(tokenMint)
             ) {
                 console.log(`Excluyendo ${tokenMint}: ${pair.chainId !== 'solana' ? 'No es Solana' : pair.quoteToken.address !== SOL_MINT ? 'Quote no es SOL' : pair.baseToken.address === SOL_MINT ? 'Base es SOL' : pair.dexId !== 'raydium' ? 'No es Raydium' : STABLECOINS.includes(tokenMint) ? 'Stablecoin' : 'Bloqueado'}`);
+                initialFiltered++;
                 continue;
             }
 
@@ -315,28 +340,22 @@ async function updateVolatileTokens() {
                 ageDays > MAX_AGE_DAYS
             ) {
                 console.log(`Excluyendo ${tokenMint}: FDV=${fdv} (requerido ${MIN_MARKET_CAP}-${MAX_MARKET_CAP}), Volumen=${volume24h} (requerido ${MIN_VOLUME}), Liquidez=${liquidity} (requerido ${MIN_LIQUIDITY}), Edad=${ageDays.toFixed(2)} días (requerido <${MAX_AGE_DAYS})`);
+                paramFiltered++;
                 continue;
             }
 
-            try {
-                const quote = await limitedQuoteGet({
-                    inputMint: SOL_MINT,
-                    outputMint: tokenMint,
-                    amount: Math.floor(0.0003 * LAMPORTS_PER_SOL),
-                    slippageBps: 5000
-                });
-                volatilePairs.push({
-                    address: tokenMint,
-                    ageDays: ageDays,
-                    liquidity,
-                    volume24h
-                });
-                console.log(`Token viable: ${tokenMint} | Edad: ${ageDays.toFixed(2)} días | Liquidez: ${liquidity} USD | Volumen 24h: ${volume24h} USD`);
-            } catch (error) {
-                console.log(`Token ${tokenMint} no comerciable en Jupiter: ${error.message} | Detalles: ${error.response?.data || 'Sin detalles'}`);
-            }
+            // Temporalmente omitir validación de Jupiter para diagnosticar
+            volatilePairs.push({
+                address: tokenMint,
+                ageDays: ageDays,
+                liquidity,
+                volume24h
+            });
+            console.log(`Token viable (sin validación de Jupiter): ${tokenMint} | Edad: ${ageDays.toFixed(2)} días | Liquidez: ${liquidity} USD | Volumen 24h: ${volume24h} USD`);
         }
-        
+
+        console.log(`Estadísticas de filtrado: ${initialFiltered} excluidos por filtros iniciales, ${paramFiltered} excluidos por parámetros, ${jupiterFiltered} excluidos por Jupiter`);
+
         volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
         volatileTokens = volatilePairs.slice(0, 10).map(t => t.address);
         console.log('Lista actualizada (mayor volumen):', volatileTokens);
@@ -347,7 +366,6 @@ async function updateVolatileTokens() {
 }
 
 async function isLiquidityLocked(tokenMint) {
-    // TODO: Implementar chequeo de liquidez bloqueada usando @raydium-io/raydium-sdk
     console.log(`Placeholder: Verificando liquidez bloqueada para ${tokenMint}`);
     return true; // Asumir que está bloqueada por ahora
 }
@@ -524,7 +542,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                 if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
                     console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
                     blockedTokens.push(tokenMint);
-                    blockedTokenTimestamps[tokenMint] = now;
+                    blockedTokenTimestamps[tokenMint] = Date.now();
                 }
             }
             await new Promise(resolve => setTimeout(resolve, 1000));
