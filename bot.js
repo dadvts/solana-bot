@@ -1,5 +1,5 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL, ComputeBudgetProgram } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddressSync, getAccount, TOKEN_PROGRAM_ID, createCloseAccountInstruction } = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, createCloseAccountInstruction } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
@@ -7,8 +7,8 @@ const fs = require('fs').promises;
 const Bottleneck = require('bottleneck');
 
 // Validar dependencias
-if (!getAssociatedTokenAddressSync) {
-    console.error('Error: getAssociatedTokenAddressSync no está disponible en @solana/spl-token');
+if (!getAssociatedTokenAddress) {
+    console.error('Error: getAssociatedTokenAddress no está disponible en @solana/spl-token');
     process.exit(1);
 }
 
@@ -34,10 +34,10 @@ const limitedAxiosGet = limiter.wrap(axios.get.bind(axios));
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0003; // Reducido para bajo saldo
-const FEE_RESERVE_SOL = 0.0003; // Reducido para bajo saldo
+const MIN_TRADE_AMOUNT_SOL = 0.0003; // Ajustado para bajo saldo
+const FEE_RESERVE_SOL = 0.0003; // Ajustado para bajo saldo
 const ESTIMATED_FEE_SOL = 0.0001;
-const CRITICAL_THRESHOLD_SOL = 0.0002; // Reducido para bajo saldo
+const CRITICAL_THRESHOLD_SOL = 0.0002; // Ajustado para bajo saldo
 const CYCLE_INTERVAL = 3000;
 const UPDATE_INTERVAL = 180000;
 const MIN_MARKET_CAP = 20000;
@@ -137,7 +137,7 @@ async function getTokenBalance(tokenMint, retries = 8) {
     try {
         const mintPubKey = new PublicKey(tokenMint);
         console.log(`Calculando ATA para ${tokenMint}`);
-        const ata = getAssociatedTokenAddressSync(mintPubKey, walletPubKey);
+        const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
         console.log(`ATA calculada: ${ata.toBase58()} para ${tokenMint}`);
 
         for (let attempt = 1; attempt <= retries; attempt++) {
@@ -177,7 +177,7 @@ async function getTokenBalance(tokenMint, retries = 8) {
 async function closeEmptyATA(tokenMint) {
     try {
         const mintPubKey = new PublicKey(tokenMint);
-        const ata = getAssociatedTokenAddressSync(mintPubKey, walletPubKey);
+        const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
         const balance = await getTokenBalance(tokenMint);
         if (balance === 0) {
             console.log(`Cerrando ATA vacía para ${tokenMint}: ${ata.toBase58()}`);
@@ -341,7 +341,6 @@ async function updateVolatileTokens() {
 
 async function isLiquidityLocked(tokenMint) {
     // TODO: Implementar chequeo de liquidez bloqueada usando @raydium-io/raydium-sdk
-    // Ejemplo: npm install @raydium-io/raydium-sdk
     console.log(`Placeholder: Verificando liquidez bloqueada para ${tokenMint}`);
     return true; // Asumir que está bloqueada por ahora
 }
