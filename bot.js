@@ -1,10 +1,14 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction, LAMPORTS_PER_SOL, ComputeBudgetProgram } = require('@solana/web3.js');
-const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, createCloseAccountInstruction } = require('@solana/spl-token');
+const splToken = require('@solana/spl-token');
+const { getMint, getAssociatedTokenAddress, getAccount, TOKEN_PROGRAM_ID, createCloseAccountInstruction } = splToken;
 const bs58 = require('bs58');
 const { createJupiterApiClient } = require('@jup-ag/api');
 const axios = require('axios');
 const fs = require('fs').promises;
 const Bottleneck = require('bottleneck');
+
+// Log para verificar la versión de @solana/spl-token
+console.log('Versión de @solana/spl-token:', require('@solana/spl-token/package.json').version);
 
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten 429: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY'
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
@@ -28,17 +32,17 @@ const limitedAxiosGet = limiter.wrap(axios.get.bind(axios));
 
 let tradingCapitalSol = 0;
 let savedSol = 0;
-const MIN_TRADE_AMOUNT_SOL = 0.0003; // Ajustado para bajo saldo
-const FEE_RESERVE_SOL = 0.0003; // Ajustado para bajo saldo
+const MIN_TRADE_AMOUNT_SOL = 0.0003; // Mantenido para bajo saldo
+const FEE_RESERVE_SOL = 0.0003; // Mantenido para bajo saldo
 const ESTIMATED_FEE_SOL = 0.0001;
-const CRITICAL_THRESHOLD_SOL = 0.0002; // Ajustado para bajo saldo
+const CRITICAL_THRESHOLD_SOL = 0.0002; // Mantenido para bajo saldo
 const CYCLE_INTERVAL = 3000;
 const UPDATE_INTERVAL = 180000;
-const MIN_MARKET_CAP = 20000;
-const MAX_MARKET_CAP = 2000000;
-const MIN_VOLUME = 20000;
-let MIN_LIQUIDITY = 2000;
-let MAX_AGE_DAYS = 1;
+const MIN_MARKET_CAP = 20000; // Sin cambios
+const MAX_MARKET_CAP = 2000000; // Sin cambios
+const MIN_VOLUME = 20000; // Sin cambios
+let MIN_LIQUIDITY = 2000; // Sin cambios
+let MAX_AGE_DAYS = 1; // Sin cambios
 const INITIAL_TAKE_PROFIT = 1.3;
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
@@ -279,28 +283,22 @@ async function updateVolatileTokens() {
         }
 
         if (pairs.length < 10) {
-            console.log('Advertencia: pocos pares obtenidos, relajando filtros...');
-            MIN_LIQUIDITY = 1000;
-            MAX_AGE_DAYS = 2;
-        } else {
-            MIN_LIQUIDITY = 2000;
-            MAX_AGE_DAYS = 1;
+            console.log('Advertencia: pocos pares obtenidos, pero manteniendo filtros originales...');
         }
 
         pairsCache = pairs;
         const volatilePairs = [];
         for (const pair of pairs.slice(0, 500)) {
+            const tokenMint = pair.baseToken.address;
             if (
                 pair.chainId !== 'solana' || 
                 pair.quoteToken.address !== SOL_MINT || 
                 pair.baseToken.address === SOL_MINT ||
                 pair.dexId !== 'raydium' ||
-                STABLECOINS.includes(pair.baseToken.address) ||
-                blockedTokens.includes(pair.baseToken.address)
+                STABLECOINS.includes(tokenMint) ||
+                blockedTokens.includes(tokenMint)
             ) {
-                if (blockedTokens.includes(pair.baseToken.address)) {
-                    console.log(`Excluyendo ${pair.baseToken.address}: bloqueado`);
-                }
+                console.log(`Excluyendo ${tokenMint}: ${pair.chainId !== 'solana' ? 'No es Solana' : pair.quoteToken.address !== SOL_MINT ? 'Quote no es SOL' : pair.baseToken.address === SOL_MINT ? 'Base es SOL' : pair.dexId !== 'raydium' ? 'No es Raydium' : STABLECOINS.includes(tokenMint) ? 'Stablecoin' : 'Bloqueado'}`);
                 continue;
             }
 
@@ -310,29 +308,32 @@ async function updateVolatileTokens() {
             const ageDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
 
             if (
-                fdv >= MIN_MARKET_CAP && 
-                fdv <= MAX_MARKET_CAP && 
-                volume24h >= MIN_VOLUME && 
-                liquidity >= MIN_LIQUIDITY && 
-                ageDays <= MAX_AGE_DAYS
+                fdv < MIN_MARKET_CAP || 
+                fdv > MAX_MARKET_CAP || 
+                volume24h < MIN_VOLUME || 
+                liquidity < MIN_LIQUIDITY || 
+                ageDays > MAX_AGE_DAYS
             ) {
-                try {
-                    const quote = await limitedQuoteGet({
-                        inputMint: SOL_MINT,
-                        outputMint: pair.baseToken.address,
-                        amount: Math.floor(0.0003 * LAMPORTS_PER_SOL),
-                        slippageBps: 5000
-                    });
-                    volatilePairs.push({
-                        address: pair.baseToken.address,
-                        ageDays: ageDays,
-                        liquidity,
-                        volume24h
-                    });
-                    console.log(`Token viable: ${pair.baseToken.address} | Edad: ${ageDays.toFixed(2)} días | Liquidez: ${liquidity} USD | Volumen 24h: ${volume24h} USD`);
-                } catch (error) {
-                    console.log(`Token ${pair.baseToken.address} no comerciable en Jupiter: ${error.message}`);
-                }
+                console.log(`Excluyendo ${tokenMint}: FDV=${fdv} (requerido ${MIN_MARKET_CAP}-${MAX_MARKET_CAP}), Volumen=${volume24h} (requerido ${MIN_VOLUME}), Liquidez=${liquidity} (requerido ${MIN_LIQUIDITY}), Edad=${ageDays.toFixed(2)} días (requerido <${MAX_AGE_DAYS})`);
+                continue;
+            }
+
+            try {
+                const quote = await limitedQuoteGet({
+                    inputMint: SOL_MINT,
+                    outputMint: tokenMint,
+                    amount: Math.floor(0.0003 * LAMPORTS_PER_SOL),
+                    slippageBps: 5000
+                });
+                volatilePairs.push({
+                    address: tokenMint,
+                    ageDays: ageDays,
+                    liquidity,
+                    volume24h
+                });
+                console.log(`Token viable: ${tokenMint} | Edad: ${ageDays.toFixed(2)} días | Liquidez: ${liquidity} USD | Volumen 24h: ${volume24h} USD`);
+            } catch (error) {
+                console.log(`Token ${tokenMint} no comerciable en Jupiter: ${error.message} | Detalles: ${error.response?.data || 'Sin detalles'}`);
             }
         }
         
@@ -416,7 +417,7 @@ async function selectBestToken() {
                 bestToken = { token: new PublicKey(tokenMint), amount: tokenAmount, decimals };
             }
         } catch (error) {
-            console.log(`Error evaluando ${tokenMint}: ${error.message}`);
+            console.log(`Error evaluando ${tokenMint}: ${error.message} | Detalles: ${error.response?.data || 'Sin detalles'}`);
             failedAttempts[tokenMint] = (failedAttempts[tokenMint] || 0) + 1;
             if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
                 console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
@@ -523,7 +524,7 @@ async function buyToken(tokenPubKey, amountPerTrade) {
                 if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
                     console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
                     blockedTokens.push(tokenMint);
-                    blockedTokenTimestamps[tokenMint] = Date.now();
+                    blockedTokenTimestamps[tokenMint] = now;
                 }
             }
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -658,7 +659,7 @@ async function getTokenPrice(tokenMint, retries = 3) {
             }
             return price;
         } catch (error) {
-            console.log(`Intento ${attempt} fallido obteniendo precio de ${tokenMint}: ${error.message}`);
+            console.log(`Intento ${attempt} fallido obteniendo precio de ${tokenMint}: ${error.message} | Detalles: ${error.response?.data || 'Sin detalles'}`);
             if (attempt === retries) {
                 try {
                     const pair = pairsCache.find(p => p.baseToken.address === tokenMint);
