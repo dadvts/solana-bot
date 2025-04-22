@@ -6,12 +6,6 @@ const axios = require('axios');
 const fs = require('fs').promises;
 const Bottleneck = require('bottleneck');
 
-// Validar dependencias
-if (!getAssociatedTokenAddress) {
-    console.error('Error: getAssociatedTokenAddress no está disponible en @solana/spl-token');
-    process.exit(1);
-}
-
 const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed'); // Cambiar a Helius si persisten 429: 'https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY'
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 if (!PRIVATE_KEY) {
@@ -137,7 +131,13 @@ async function getTokenBalance(tokenMint, retries = 8) {
     try {
         const mintPubKey = new PublicKey(tokenMint);
         console.log(`Calculando ATA para ${tokenMint}`);
-        const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+        let ata;
+        try {
+            ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+        } catch (error) {
+            console.error(`Error al calcular ATA para ${tokenMint}: ${error.message}`);
+            return 0;
+        }
         console.log(`ATA calculada: ${ata.toBase58()} para ${tokenMint}`);
 
         for (let attempt = 1; attempt <= retries; attempt++) {
@@ -177,7 +177,13 @@ async function getTokenBalance(tokenMint, retries = 8) {
 async function closeEmptyATA(tokenMint) {
     try {
         const mintPubKey = new PublicKey(tokenMint);
-        const ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+        let ata;
+        try {
+            ata = await getAssociatedTokenAddress(mintPubKey, walletPubKey);
+        } catch (error) {
+            console.error(`Error al calcular ATA para ${tokenMint}: ${error.message}`);
+            return;
+        }
         const balance = await getTokenBalance(tokenMint);
         if (balance === 0) {
             console.log(`Cerrando ATA vacía para ${tokenMint}: ${ata.toBase58()}`);
