@@ -7,7 +7,7 @@ const axios = require('axios');
 const fs = require('fs').promises;
 const Bottleneck = require('bottleneck');
 
-// Verify @solana/spl-token version
+// Verificar versión de @solana/spl-token
 const splTokenVersion = require('@solana/spl-token/package.json').version;
 console.log('Versión de @solana/spl-token:', splTokenVersion);
 if (splTokenVersion !== '0.3.8') {
@@ -30,13 +30,13 @@ const STABLECOINS = [
     'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'  // USDC
 ];
 
-// Axios configuration with increased timeout
+// Configuración de axios con timeout aumentado y reintentos
 const axiosInstance = axios.create({
-    timeout: 15000, // Increased from default 10s to 15s
+    timeout: 15000, // Timeout aumentado a 15 segundos
     headers: { 'User-Agent': 'solana-bot/1.0' }
 });
 
-// Rate limiter for API calls
+// Rate limiting para APIs
 const limiter = new Bottleneck({ minTime: 200 });
 const limitedQuoteGet = limiter.wrap(jupiterApi.quoteGet.bind(jupiterApi));
 const limitedAxiosGet = limiter.wrap(async (url) => {
@@ -63,7 +63,7 @@ const MIN_MARKET_CAP = 20000;
 const MAX_MARKET_CAP = 2000000;
 const MIN_VOLUME = 20000;
 const MIN_LIQUIDITY = 2000;
-const MAX_AGE_DAYS = 7; // Increased from 1 to 7 days
+let MAX_AGE_DAYS = 7; // Aumentado de 1 a 7 días
 const INITIAL_TAKE_PROFIT = 1.3;
 const SCALE_SELL_PORTION = 0.25;
 const TARGET_INITIAL_SOL = 0.05;
@@ -164,7 +164,7 @@ async function getTokenBalance(tokenMint, retries = 8) {
                 if (error.message.includes('TokenAccountNotFoundError') || error.message.includes('Account not found')) {
                     return 0;
                 }
-                console.log(`Intento ${attempt} fallido: ${error.message}`);
+                console.log(`Intento ${attempt} fallido obteniendo saldo de ${tokenMint}: ${error.message}`);
                 if (attempt === retries) return 0;
                 await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 500));
             }
@@ -231,6 +231,7 @@ async function scanWalletForTokens(force = false) {
                     console.log(`Ignorando stablecoin: ${mint}`);
                     continue;
                 }
+                console.log(`Procesando ATA ${ata} para mint ${mint}`);
                 const balance = await getTokenBalance(mint);
                 if (balance > DUST_THRESHOLD) {
                     const decimals = await getTokenDecimals(mint);
@@ -269,7 +270,7 @@ async function updateVolatileTokens() {
             pairs = response.data.pairs || [];
             console.log(`Total de pares obtenidos de DexScreener: ${pairs.length}`);
         } catch (error) {
-            console.log(`Error DexScreener: ${error.message} | Detalles: ${error.response?.data || 'Sin detalles'}`);
+            console.log(`Error DexScreener: ${error.message}`);
             return;
         }
 
@@ -277,127 +278,55 @@ async function updateVolatileTokens() {
             console.log('Error: No se obtuvieron pares de DexScreener');
             return;
         }
-        if (pairs.length < 10) {
-            console.log('Advertencia: pocos pares obtenidos, pero manteniendo filtros originales...');
-        }
 
         pairsCache = pairs;
-        let filterStats = {
-            chainId: 0,
-            quoteToken: 0,
-            baseToken: 0,
-            dexId: 0,
-            stablecoin: 0,
-            blocked: 0,
-            fdv: 0,
-            volume: 0,
-            liquidity: 0,
-            age: 0,
-            jupiter: 0
-        };
+        let initialFiltered = 0;
+        let paramFiltered = 0;
+        let jupiterFiltered = 0;
         const volatilePairs = [];
 
         for (const pair of pairs.slice(0, 500)) {
             const tokenMint = pair.baseToken.address;
-
-            // Initial filters
-            if (pair.chainId !== 'solana') {
-                console.log(`Excluyendo ${tokenMint}: chainId no es Solana`);
-                filterStats.chainId++;
-                continue;
-            }
-            if (pair.quoteToken.address !== SOL_MINT) {
-                console.log(`Excluyendo ${tokenMint}: quoteToken no es SOL`);
-                filterStats.quoteToken++;
-                continue;
-            }
-            if (pair.baseToken.address === SOL_MINT) {
-                console.log(`Excluyendo ${tokenMint}: baseToken es SOL`);
-                filterStats.baseToken++;
-                continue;
-            }
-            if (pair.dexId !== 'raydium') {
-                console.log(`Excluyendo ${tokenMint}: dexId no es Raydium`);
-                filterStats.dexId++;
-                continue;
-            }
-            if (STABLECOINS.includes(tokenMint)) {
-                console.log(`Excluyendo ${tokenMint}: es stablecoin`);
-                filterStats.stablecoin++;
-                continue;
-            }
-            if (blockedTokens.includes(tokenMint)) {
-                console.log(`Excluyendo ${tokenMint}: está bloqueado`);
-                filterStats.blocked++;
+            if (
+                pair.chainId !== 'solana' || 
+                pair.quoteToken.address !== SOL_MINT || 
+                pair.baseToken.address === SOL_MINT ||
+                pair.dexId !== 'raydium' ||
+                STABLECOINS.includes(tokenMint) ||
+                blockedTokens.includes(tokenMint)
+            ) {
+                console.log(`Excluyendo ${tokenMint}: ${pair.chainId !== 'solana' ? 'No es Solana' : pair.quoteToken.address !== SOL_MINT ? 'Quote no es SOL' : pair.baseToken.address === SOL_MINT ? 'Base es SOL' : pair.dexId !== 'raydium' ? 'No es Raydium' : STABLECOINS.includes(tokenMint) ? 'Stablecoin' : 'Bloqueado'}`);
+                initialFiltered++;
                 continue;
             }
 
-            // Parameter filters
             const fdv = pair.fdv || 0;
             const volume24h = pair.volume?.h24 || 0;
             const liquidity = pair.liquidity?.usd || 0;
             const ageDays = pair.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
 
-            if (fdv < MIN_MARKET_CAP || fdv > MAX_MARKET_CAP) {
-                console.log(`Excluyendo ${tokenMint}: FDV=${fdv} (requerido ${MIN_MARKET_CAP}-${MAX_MARKET_CAP})`);
-                filterStats.fdv++;
+            if (
+                fdv < MIN_MARKET_CAP || 
+                fdv > MAX_MARKET_CAP || 
+                volume24h < MIN_VOLUME || 
+                liquidity < MIN_LIQUIDITY || 
+                ageDays > MAX_AGE_DAYS
+            ) {
+                console.log(`Excluyendo ${tokenMint}: FDV=${fdv} (requerido ${MIN_MARKET_CAP}-${MAX_MARKET_CAP}), Volumen=${volume24h} (requerido ${MIN_VOLUME}), Liquidez=${liquidity} (requerido ${MIN_LIQUIDITY}), Edad=${ageDays.toFixed(2)} días (requerido <${MAX_AGE_DAYS})`);
+                paramFiltered++;
                 continue;
-            }
-            if (volume24h < MIN_VOLUME) {
-                console.log(`Excluyendo ${tokenMint}: Volumen=${volume24h} (requerido ${MIN_VOLUME})`);
-                filterStats.volume++;
-                continue;
-            }
-            if (liquidity < MIN_LIQUIDITY) {
-                console.log(`Excluyendo ${tokenMint}: Liquidez=${liquidity} (requerido ${MIN_LIQUIDITY})`);
-                filterStats.liquidity++;
-                continue;
-            }
-            if (ageDays > MAX_AGE_DAYS) {
-                console.log(`Excluyendo ${tokenMint}: Edad=${ageDays.toFixed(2)} días (requerido <${MAX_AGE_DAYS})`);
-                filterStats.age++;
-                continue;
-            }
-
-            // Relaxed Jupiter validation
-            let jupiterValid = true;
-            try {
-                await limitedQuoteGet({
-                    inputMint: SOL_MINT,
-                    outputMint: tokenMint,
-                    amount: Math.floor(MIN_TRADE_AMOUNT_SOL * LAMPORTS_PER_SOL),
-                    slippageBps: 5000
-                });
-            } catch (error) {
-                console.log(`Excluyendo ${tokenMint}: Falló validación de Jupiter: ${error.message}`);
-                filterStats.jupiter++;
-                jupiterValid = false;
-                // Continue instead of skipping to allow tokens without strict Jupiter validation
             }
 
             volatilePairs.push({
                 address: tokenMint,
                 ageDays,
                 liquidity,
-                volume24h,
-                jupiterValid
+                volume24h
             });
-            console.log(`Token viable: ${tokenMint} | Edad: ${ageDays.toFixed(2)} días | Liquidez: ${liquidity} USD | Volumen 24h: ${volume24h} USD | Jupiter: ${jupiterValid}`);
+            console.log(`Token viable (sin validación de Jupiter): ${tokenMint} | Edad: ${ageDays.toFixed(2)} días | Liquidez: ${liquidity} USD | Volumen 24h: ${volume24h} USD`);
         }
 
-        console.log(`Estadísticas de filtrado:`, {
-            'No Solana': filterStats.chainId,
-            'Quote no SOL': filterStats.quoteToken,
-            'Base es SOL': filterStats.baseToken,
-            'No Raydium': filterStats.dexId,
-            Stablecoin: filterStats.stablecoin,
-            Bloqueado: filterStats.blocked,
-            'FDV fuera de rango': filterStats.fdv,
-            'Volumen bajo': filterStats.volume,
-            'Liquidez baja': filterStats.liquidity,
-            'Edad excesiva': filterStats.age,
-            'Falló Jupiter': filterStats.jupiter
-        });
+        console.log(`Estadísticas de filtrado: ${initialFiltered} excluidos por filtros iniciales, ${paramFiltered} excluidos por parámetros, ${jupiterFiltered} excluidos por Jupiter`);
 
         volatilePairs.sort((a, b) => b.volume24h - a.volume24h);
         volatileTokens = volatilePairs.slice(0, 10).map(t => t.address);
@@ -406,6 +335,11 @@ async function updateVolatileTokens() {
         console.log('Error actualizando tokens:', error.message);
         volatileTokens = [];
     }
+}
+
+async function isLiquidityLocked(tokenMint) {
+    console.log(`Placeholder: Verificando liquidez bloqueada para ${tokenMint}`);
+    return true;
 }
 
 async function selectBestToken() {
@@ -428,22 +362,26 @@ async function selectBestToken() {
     );
 
     for (const tokenMint of volatileTokens) {
+        const pair = pairsCache.find(p => p.baseToken.address === tokenMint);
+        const ageDays = pair?.pairCreatedAt ? (Date.now() - pair.pairCreatedAt) / (1000 * 60 * 60 * 24) : Infinity;
+        
         if (
-            tokenMint === SOL_MINT ||
-            soldTokensHistory[tokenMint] ||
-            portfolio[tokenMint] ||
+            tokenMint === SOL_MINT || 
+            soldTokensHistory[tokenMint] || 
+            portfolio[tokenMint] || 
             (purchaseHistory[tokenMint]?.count || 0) >= MAX_PURCHASES_PER_TOKEN ||
             blockedTokens.includes(tokenMint) ||
             STABLECOINS.includes(tokenMint) ||
-            (await getTokenBalance(tokenMint) > DUST_THRESHOLD)
+            (await getTokenBalance(tokenMint) > DUST_THRESHOLD) ||
+            ageDays > MAX_AGE_DAYS ||
+            !(await isLiquidityLocked(tokenMint))
         ) {
-            console.log(`Excluyendo ${tokenMint}: ${tokenMint === SOL_MINT ? 'Es SOL' : soldTokensHistory[tokenMint] ? 'Recientemente vendido' : portfolio[tokenMint] ? 'En portfolio' : (purchaseHistory[tokenMint]?.count || 0) >= MAX_PURCHASES_PER_TOKEN ? 'Máximo de compras' : blockedTokens.includes(tokenMint) ? 'Bloqueado' : STABLECOINS.includes(tokenMint) ? 'Stablecoin' : 'Saldo existente'}`);
-            continue;
-        }
-
-        const currentPrice = await getTokenPrice(tokenMint);
-        if (purchaseHistory[tokenMint] && currentPrice < purchaseHistory[tokenMint].buyPrice) {
-            console.log(`Excluyendo ${tokenMint}: precio actual (${currentPrice}) menor que precio de compra (${purchaseHistory[tokenMint].buyPrice})`);
+            console.log(`Excluyendo ${tokenMint}: ${tokenMint === SOL_MINT ? 'Es SOL' : soldTokensHistory[tokenMint] ? 'Recientemente vendido' : portfolio[tokenMint] ? 'En portfolio' : (purchaseHistory[tokenMint]?.count || 0) >= MAX_PURCHASES_PER_TOKEN ? 'Máximo de compras alcanzado' : blockedTokens.includes(tokenMint) ? 'Bloqueado' : STABLECOINS.includes(tokenMint) ? 'Stablecoin' : (await getTokenBalance(tokenMint) > DUST_THRESHOLD) ? 'Saldo existente' : ageDays > MAX_AGE_DAYS ? 'Edad superior a 7 días' : 'Liquidez no bloqueada'}`);
+            if (ageDays > MAX_AGE_DAYS && !blockedTokens.includes(tokenMint)) {
+                console.log(`Bloqueando ${tokenMint}: edad superior a ${MAX_AGE_DAYS} días`);
+                blockedTokens.push(tokenMint);
+                blockedTokenTimestamps[tokenMint] = now;
+            }
             continue;
         }
 
@@ -467,7 +405,7 @@ async function selectBestToken() {
             if (failedAttempts[tokenMint] >= MAX_FAILED_ATTEMPTS) {
                 console.log(`Bloqueando ${tokenMint} tras ${MAX_FAILED_ATTEMPTS} intentos fallidos`);
                 blockedTokens.push(tokenMint);
-                blockedTokenTimestamps[tokenMint] = Date.now();
+                blockedTokenTimestamps[tokenMint] = now;
             }
         }
     }
@@ -491,12 +429,11 @@ async function buyToken(tokenPubKey, amountPerTrade) {
         try {
             const solBalance = await getWalletBalanceSol();
             if (solBalance < MIN_TRADE_AMOUNT_SOL + FEE_RESERVE_SOL + ESTIMATED_FEE_SOL) {
-                console.log(`Compra pausada: saldo SOL insuficiente (${solBalance})`);
+                console.log(`Compra pausada: saldo SOL insuficiente (${solBalance} < ${MIN_TRADE_AMOUNT_SOL + FEE_RESERVE_SOL + ESTIMATED_FEE_SOL})`);
                 return;
             }
             const maxTradeAmount = (solBalance - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL) * 0.3;
             const tradeAmount = Math.min(amountPerTrade, Math.max(maxTradeAmount, MIN_TRADE_AMOUNT_SOL));
-
             const decimals = await getTokenDecimals(tokenPubKey);
             const quote = await limitedQuoteGet({
                 inputMint: SOL_MINT,
@@ -680,7 +617,7 @@ async function getTokenPrice(tokenMint, retries = 3) {
             if (attempt === retries) {
                 const pair = pairsCache.find(p => p.baseToken.address === tokenMint);
                 if (pair && pair.priceUsd) {
-                    return pair.priceUsd / 170; // Assuming $170/SOL
+                    return pair.priceUsd / 170; // Aproximación basada en SOL a $170
                 }
                 return 0;
             }
@@ -718,6 +655,7 @@ async function tradingBot() {
     await syncPortfolio();
 
     if (realBalanceSol < CRITICAL_THRESHOLD_SOL && Object.keys(portfolio).length > 0) {
+        console.log('Capital crítico: vendiendo todo...');
         for (const token in portfolio) await sellToken(new PublicKey(token));
         return;
     }
@@ -725,6 +663,7 @@ async function tradingBot() {
     for (const token in portfolio) {
         const price = await getTokenPrice(token);
         if (price === 0) {
+            console.log(`Vendiendo ${token}: precio no disponible`);
             await sellToken(new PublicKey(token));
         }
     }
@@ -735,52 +674,66 @@ async function tradingBot() {
         const timeHeld = Date.now() - purchaseTime;
 
         if (timeHeld > MAX_HOLD_TIME || currentPrice === 0) {
+            console.log(`Vendiendo ${token}: tiempo máximo alcanzado o precio no disponible`);
             await sellToken(new PublicKey(token));
         } else if (currentPrice !== null) {
             const growth = currentPrice / buyPrice;
             const growthVsLast = lastPrice > 0 ? (currentPrice - lastPrice) / lastPrice : Infinity;
 
             if (growth <= STOP_LOSS_THRESHOLD) {
+                console.log(`Stop-loss activado para ${token}`);
                 await sellToken(new PublicKey(token));
             } else if (!initialSold && growth >= INITIAL_TAKE_PROFIT) {
+                console.log(`Take-profit inicial para ${token}`);
                 const portionToRecover = investedSol > 0 ? Math.min(1, investedSol / (currentPrice * portfolio[token].amount)) : 0.25;
                 await sellToken(new PublicKey(token), portionToRecover);
             } else if (initialSold && growth >= 1.5 && growthVsLast > 0) {
+                console.log(`Escalando ganancias para ${token}`);
                 await sellToken(new PublicKey(token), SCALE_SELL_PORTION);
             }
+            portfolio[token].lastPrice = currentPrice;
         }
     }
 
+    const availableCapital = tradingCapitalSol - FEE_RESERVE_SOL - ESTIMATED_FEE_SOL;
     if (Object.keys(portfolio).length >= MAX_PORTFOLIO_TOKENS) {
-        console.log('Portfolio lleno, esperando ventas...');
-        return;
-    }
-
-    await updateVolatileTokens();
-    const bestToken = await selectBestToken();
-    if (bestToken && tradingCapitalSol > MIN_TRADE_AMOUNT_SOL + FEE_RESERVE_SOL + ESTIMATED_FEE_SOL) {
-        await buyToken(bestToken.token, MIN_TRADE_AMOUNT_SOL);
+        console.log(`No se puede comprar: Portfolio lleno (${Object.keys(portfolio).length}/${MAX_PORTFOLIO_TOKENS})`);
+    } else if (availableCapital < MIN_TRADE_AMOUNT_SOL) {
+        console.log(`No se puede comprar: Capital insuficiente (${availableCapital} SOL < ${MIN_TRADE_AMOUNT_SOL} SOL)`);
     } else {
-        console.log('No se encontraron tokens viables para comprar');
+        const bestToken = await selectBestToken();
+        if (bestToken && !portfolio[bestToken.token.toBase58()]) {
+            console.log(`Comprando token: ${bestToken.token.toBase58()} con ${availableCapital} SOL`);
+            await buyToken(bestToken.token, availableCapital);
+        } else {
+            console.log('No se encontraron tokens viables para comprar');
+        }
     }
     console.log('Ciclo de trading completado.');
 }
 
-async function main() {
-    console.log('Iniciando bot | Versión de Node.js:', process.version);
-    await loadPersistentData();
-    tradingCapitalSol = await getWalletBalanceSol();
-    console.log(`Bot iniciado | Capital inicial: ${tradingCapitalSol} SOL`);
-    console.log(`Dirección de la wallet: ${walletPubKey.toBase58()}`);
-    blockedTokens = [];
-    console.log('Blocked tokens limpiados al inicio');
-    await scanWalletForTokens(true);
-    await updateVolatileTokens();
+async function startBot() {
+    console.log(`Iniciando bot | Versión de Node.js: ${process.version}`);
+    try {
+        await loadPersistentData();
+        const solBalance = await getWalletBalanceSol();
+        tradingCapitalSol = solBalance;
+        console.log('Bot iniciado | Capital inicial:', tradingCapitalSol, 'SOL');
+        console.log('Dirección de la wallet:', walletPubKey.toBase58());
 
-    setInterval(tradingBot, CYCLE_INTERVAL);
+        blockedTokens = [];
+        blockedTokenTimestamps = {};
+        console.log('Blocked tokens limpiados al inicio');
+
+        await updateVolatileTokens();
+        await scanWalletForTokens(true);
+        await tradingBot();
+        setInterval(tradingBot, CYCLE_INTERVAL);
+        setInterval(updateVolatileTokens, UPDATE_INTERVAL);
+    } catch (error) {
+        console.error(`Error crítico iniciando bot: ${error.message}`);
+        setTimeout(startBot, 30000);
+    }
 }
 
-main().catch(error => {
-    console.error('Error en main:', error);
-    process.exit(1);
-});
+startBot();
